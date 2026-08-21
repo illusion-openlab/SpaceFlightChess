@@ -165,6 +165,43 @@ fun GameHud(
     }
 }
 
+/**
+ * Shown when the player presses the controller input `BoardStage`'s `OnBackPressedCallback`
+ * intercepts — `DefaultStage` has no window chrome to fall back on, so without that callback the
+ * input silently killed the whole session via `Activity.finish()` (see `BoardStage.findComponentActivity`).
+ * Same layout as [StartPanel] / [ResultPanel]; 取消 dismisses, 退出 actually exits.
+ */
+@Composable
+fun ExitConfirmPanel(onCancel: () -> Unit, onExit: () -> Unit) {
+    GlassPanel(width = 320, height = 200) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "退出游戏？",
+                color = PicoTheme.colorScheme.labelPrimary,
+                style = PicoTheme.typography.headlineSmall,
+            )
+            Spacer(Modifier.size(10.dp))
+            Text(
+                text = "当前进度将不会保存",
+                color = PicoTheme.colorScheme.labelSecondary,
+                style = PicoTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.weight(1f))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(onClick = onCancel) {
+                    Text("取消", style = PicoTheme.typography.labelLarge)
+                }
+                Button(onClick = onExit) {
+                    Text("退出", style = PicoTheme.typography.labelLarge)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun ResultPanel(ranking: List<Team>, humanTeam: Team, onPlayAgain: () -> Unit) {
     GlassPanel(width = 320, height = 240) {

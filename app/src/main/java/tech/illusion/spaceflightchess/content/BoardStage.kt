@@ -1,6 +1,10 @@
 package tech.illusion.spaceflightchess.content
 
+import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -46,6 +50,20 @@ private const val TAG = "SpaceFlightChess"
 private const val START_PANEL = "start"
 private const val HUD_PANEL = "hud"
 private const val RESULT_PANEL = "result"
+private const val EXIT_CONFIRM_PANEL = "exitConfirm"
+
+/**
+ * Unwraps a Compose [Context] down to the hosting [ComponentActivity] — `LocalContext.current`
+ * inside [SpatialView]'s content isn't guaranteed to already be the bare Activity (it can arrive
+ * wrapped, same as anywhere else in Android), so this walks the [ContextWrapper] chain rather than
+ * assuming a direct cast. Needed to reach `onBackPressedDispatcher` for the exit-confirm handling
+ * in [BoardStage].
+ */
+private tailrec fun Context.findComponentActivity(): ComponentActivity? = when (this) {
+    is ComponentActivity -> this
+    is ContextWrapper -> baseContext.findComponentActivity()
+    else -> null
+}
 
 /**
  * Everything the game needs: the board rig, the two renderers ([BoardRenderer] for the static
@@ -109,6 +127,15 @@ fun BoardStage() {
     /** Which team the die is currently parked in front of; drives [syncDieSlot]. */
     var dieSlotTeam by remember { mutableStateOf<Team?>(null) }
     var ranking by remember { mutableStateOf<List<Team>>(emptyList()) }
+
+    /**
+     * Whether the exit-confirm panel is up — see the `OnBackPressedCallback` below for why it
+     * exists. Every other panel's own visibility condition is AND-ed with `!showExitConfirm` so
+     * nothing else occupies the same anchor position at once, and the AI-turn driver and the human
+     * tap handler both gate on it too so nothing moves on the board while the player is deciding.
+     */
+    var showExitConfirm by remember { mutableStateOf(false) }
+    val activity = remember(context) { context.findComponentActivity() }
 
     /** Bumped on every state change so the render loop knows to re-sync piece positions. */
     var revision by remember { mutableIntStateOf(0) }
@@ -297,7 +324,8 @@ fun BoardStage() {
         while (true) {
             val aiTurn = engine.phase == Phase.AWAITING_ROLL &&
                 engine.state.currentTeam != humanTeam &&
-                !isTurnBusy
+                !isTurnBusy &&
+                !showExitConfirm // freeze the AI while the exit-confirm panel is up
             if (!aiTurn) {
                 delay(TURN_POLL_MS)
                 continue
@@ -310,6 +338,25 @@ fun BoardStage() {
                 aiThinking = false
             }
         }
+    }
+
+    // `DefaultStage` (see `mainApp`) is full immersion with no window chrome at all — no caption
+    // bar, no close button. Confirmed on real hardware: several different physical controller
+    // inputs (at least a single press of one button, and a double-press of another) all get
+    // translated by PICO OS into a plain KEYCODE_BACK `KeyEvent` delivered to the foreground app
+    // exactly like a phone's Back button. Left unhandled, `ComponentActivity`'s default back
+    // handling calls `finish()` immediately, silently killing the whole session mid-game — almost
+    // certainly what got reported as a crash during store review of a sibling app. This registers
+    // our own callback on the stock AndroidX dispatcher so that input asks for confirmation instead.
+    DisposableEffect(activity) {
+        if (activity == null) return@DisposableEffect onDispose {}
+        val callback = object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                showExitConfirm = true
+            }
+        }
+        activity.onBackPressedDispatcher.addCallback(callback)
+        onDispose { callback.remove() }
     }
 
     DisposableEffect(hmdTrackingProvider) {
@@ -351,7 +398,7 @@ fun BoardStage() {
                     // seconds a walk takes they still describe the previous turn — which silently
                     // swallowed the die tap at exactly the "you rolled a 6, roll again" moment.
                     if (dieRenderer.isDie(info.targetedEntity)) {
-                        if (engine.phase == Phase.AWAITING_ROLL && engine.state.currentTeam == humanTeam && !isTurnBusy) {
+                        if (engine.phase == Phase.AWAITING_ROLL && engine.state.currentTeam == humanTeam && !isTurnBusy && !showExitConfirm) {
                             coroutineScope.launch { rollAndAdvance() }
                         } else {
                             Log.e(
@@ -372,7 +419,8 @@ fun BoardStage() {
                     if (engine.phase != Phase.AWAITING_MOVE ||
                         engine.state.currentTeam != humanTeam ||
                         team != humanTeam ||
-                        isTurnBusy
+                        isTurnBusy ||
+                        showExitConfirm
                     ) {
                         Log.e(
                             TAG,
@@ -425,12 +473,12 @@ fun BoardStage() {
         },
         attachments = {
             AttachmentPanel(id = START_PANEL) {
-                if (phase == Phase.SETUP) {
+                if (phase == Phase.SETUP && !showExitConfirm) {
                     StartPanel(onStart = ::startWithFaction)
                 }
             }
             AttachmentPanel(id = HUD_PANEL) {
-                if (phase != Phase.SETUP && phase != Phase.GAME_OVER) {
+                if (phase != Phase.SETUP && phase != Phase.GAME_OVER && !showExitConfirm) {
                     GameHud(
                         currentTeam = currentTeam,
                         isHumanTurn = currentTeam == humanTeam,
@@ -441,8 +489,16 @@ fun BoardStage() {
                 }
             }
             AttachmentPanel(id = RESULT_PANEL) {
-                if (phase == Phase.GAME_OVER) {
+                if (phase == Phase.GAME_OVER && !showExitConfirm) {
                     ResultPanel(ranking = ranking, humanTeam = humanTeam, onPlayAgain = { engine.restart(); publish() })
+                }
+            }
+            AttachmentPanel(id = EXIT_CONFIRM_PANEL) {
+                if (showExitConfirm) {
+                    ExitConfirmPanel(
+                        onCancel = { showExitConfirm = false },
+                        onExit = { activity?.finish() },
+                    )
                 }
             }
         },
@@ -503,7 +559,7 @@ fun BoardStage() {
     )
 }
 
-private val PANEL_IDS = listOf(START_PANEL, HUD_PANEL, RESULT_PANEL)
+private val PANEL_IDS = listOf(START_PANEL, HUD_PANEL, RESULT_PANEL, EXIT_CONFIRM_PANEL)
 
 // The rig itself now sits at table height, forward-offset toward the board's near edge rather than
 // centred under the player (see the class doc), so panels need their own additional up-and-forward
@@ -517,6 +573,9 @@ private val PANEL_OFFSETS = listOf(
     // player's own centre line — and because the board is square and the rig is aligned to the seat,
     // that line runs straight up the middle of the lane opposite them.
     Vector3(0f, 0.45f, -0.35f),
+    Vector3(0f, 0.55f, -0.35f),
+    // Exit-confirm shares the same centred anchor as start/result — the three are mutually exclusive
+    // by their own visibility conditions, so there is never a clash.
     Vector3(0f, 0.55f, -0.35f),
 )
 
