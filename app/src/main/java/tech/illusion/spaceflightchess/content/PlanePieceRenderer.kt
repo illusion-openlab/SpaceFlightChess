@@ -299,25 +299,6 @@ class PlanePieceRenderer {
      * played the flight loop on top of the 待飞 cue: 「飞机从机库待机时不要播放飞机飞行声音，只播放待机声音」.
      */
     /**
-     * Each asset's own nose direction, expressed as the yaw that brings it to heading 0 (+Z).
-     *
-     * Measured, not guessed: the four `.usdz` payloads were converted to ASCII USD and read. All four
-     * stages are Y-up at `metersPerUnit = 0.01`. Red's propeller joints sit at z=+11.71 with the tail
-     * joint at z=−3.86, and green's `Prop` mesh at z=+4.4 against its `BackWing` at z=−5.7 — both noses
-     * on **+Z**. Blue's `Propeller_M_Plane_0` sits at x=−70.4 against `BackFlap` at x=+142.0, and
-     * yellow's trail mesh likewise runs along −X — both noses on **−X**, hence +90°.
-     *
-     * Same spirit as [DieRenderer]'s measured `VALUE_TO_ROTATION` table: per-asset constants belong in
-     * one labelled place, with the measurement recorded next to them.
-     */
-    private val MODEL_YAW_OFFSET_DEG: Map<Team, Float> = mapOf(
-        Team.RED to 0f,
-        Team.GREEN to 0f,
-        Team.BLUE to 90f,
-        Team.YELLOW to 90f,
-    )
-
-    /**
      * Points [piece] along [headingDegrees]. Only ever a yaw — one non-zero Euler component — because the
      * SDK composes extrinsically as `M_yaw(Y) * M_pitch(X) * M_roll(Z)`, so a lone yaw is a clean rotation
      * about world +Y and cannot interact with anything else.
@@ -729,13 +710,6 @@ class PlanePieceRenderer {
         Team.YELLOW -> Color4(0.98f, 0.80f, 0.14f, 1f)
         Team.BLUE -> Color4(0.20f, 0.45f, 0.95f, 1f)
         Team.GREEN -> Color4(0.25f, 0.70f, 0.35f, 1f)
-    }
-
-    private fun assetFileFor(team: Team): String = when (team) {
-        Team.RED -> "red_plane.usdz"
-        Team.YELLOW -> "yellow_plane.usdz"
-        Team.BLUE -> "blue_plane.usdz"
-        Team.GREEN -> "green_plane.usdz"
     }
 
     companion object {
