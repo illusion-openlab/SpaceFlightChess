@@ -493,9 +493,13 @@ fun BoardStage(bundle: Bundle?) {
                 // 机库」，而现在渲染器还没 attach，根本没有可见的中间状态需要掩盖。
                 //
                 // 必须在 boardRenderer / pieceRenderer 的 attachTo 之前：它们建实体时就会读
-                // BoardGeometry 的席位相关几何。
+                // BoardGeometry 的席位相关几何。**engine.startGame() 不能放在这里**——见下面
+                // attachTo 调用之后的那一行：Compose effect（AI 轮询的 LaunchedEffect）比
+                // SpatialView.initial 先跑，phase 一旦在这里翻成 AWAITING_ROLL，渲染器还没
+                // attach 之前 AI 就已经在静默摇骰子/走子了（isAttached 门禁让那几轮动画整个
+                // 不播），棋盘淡入时已经是走了几步之后的样子——跟被删掉的就座动画想掩盖的问题
+                // 是同一类观感。
                 BoardGeometry.configureSeat(humanTeam)
-                engine.startGame()
                 content.addEntity(rig)
                 // Remembered so the die's rest spot can be placed on the same axis the board was —
                 // otherwise the two would disagree whenever the HMD sample arrives (or doesn't).
@@ -530,10 +534,18 @@ fun BoardStage(bundle: Bundle?) {
                 dieRenderer.attachTo(rig)
                 musicPlayer.attachTo(rig)
                 eventSoundPlayer.attachTo(rig)
+                // Only now — every renderer is attached, so the AI-turn driver's isAttached-gated
+                // animations actually have something to animate instead of silently no-op'ing
+                // through the first few turns while the board is still loading.
+                engine.startGame()
                 // The die sits ON the board, in front of whoever's turn it is — the empty pocket beside
                 // that team's own hangar (BoardGeometry.dieSlotPosition). It follows the turn, so this is
                 // only the initial placement; syncDieSlot moves it from then on.
                 dieRenderer.setRestPosition(dieSlotFor(engine.state.currentTeam))
+                // startWithFaction used to set this alongside the rest-position call; without it the
+                // first syncDieSlot() always sees dieSlotTeam == null != currentTeam and fires a
+                // harmless but pointless no-op glideToRest to the slot the die is already resting in.
+                dieSlotTeam = engine.state.currentTeam
 
                 PANEL_IDS.forEachIndexed { index, id ->
                     attachments.entity(id)?.let { entity ->

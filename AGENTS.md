@@ -956,16 +956,31 @@ controller 调 `.stop()`（+`.close()`）再执行原有的逐实体 `stopAllAni
   - `HowtoOverlay`/`HowtoBadge`（"玩法"说明浮层，Task 3 引入）之前是 `internal`，因为
     `StartPanel` 跨文件调用；`StartPanel` 删掉之后两者唯一的调用方就剩 `HangarWindow.kt` 自
     己，已随手降级回 `private`。
+  - `StartPanel` 消失的另一个持久后果：棋盘内已经没有任何 UI 会在 `Phase.SETUP` 时调
+    `engine.startGame()` 了。`ResultPanel`「再来一局」的 `onPlayAgain` 必须在自己的
+    `engine.restart()` 之后**紧接着**自己调一次 `engine.startGame()`——`restart()` 只是把
+    phase 打回 `SETUP`，不会自动往下走，少了这一步棋就会卡死在一个没有任何面板能救的
+    `SETUP` 状态。这条有专门的回归测试钉住：
+    `GameEngineTest.kt` 里 `restart 单独调用会停在 SETUP —— 这就是机库窗口取代 StartPanel
+    后必须补 startGame 的原因`。
 - **就座不再有过渡动画**：原来 `startWithFaction(team)` 会先把阵营选择结果动画化（棋盘朝向
   + 16 架飞机的机库位置插值过渡 `SEAT_ANIMATION_STEPS=30` 帧），再 `engine.startGame()`——
   这段动画存在的唯一理由是掩盖「棋子瞬移到看起来一样但队伍不对的机库」这个观感问题。现在阵
-  营在进 Stage 之前就通过 bundle 定了，`BoardGeometry.configureSeat(humanTeam)` +
-  `engine.startGame()` 直接在 `SpatialView` 的 `initial` 块里、`boardRenderer`/`pieceRenderer`
-  的 `attachTo` **之前**调用（它们建实体时会读 `BoardGeometry` 的席位几何），渲染器此时还没
-  attach，没有可见的中间状态需要掩盖，所以整段插值动画、`startWithFaction`、`isSeating` 状
-  态、`SEAT_ANIMATION_STEPS`/`SEAT_ANIMATION_FRAME_MS` 两个常量一并删除。
+  营在进 Stage 之前就通过 bundle 定了，`initial` 块里 `BoardGeometry.configureSeat(humanTeam)`
+  在 `boardRenderer`/`pieceRenderer` 的 `attachTo` **之前**调用（它们建实体时会读
+  `BoardGeometry` 的席位几何），所以整段插值动画、`startWithFaction`、`isSeating` 状态、
+  `SEAT_ANIMATION_STEPS`/`SEAT_ANIMATION_FRAME_MS` 两个常量一并删除。
   `AnimationMath.kt` 里的 `lerp`/`smoothStep`/`lerpAngleDegrees` **没有跟着删**——棋子走棋动
   画（`PlanePieceRenderer.animateMove` 经 `DieRenderer` 的滚动效果）还在用。
+  - **`engine.startGame()` 反而不能挪到 `configureSeat` 旁边一起提前**——这是 Task 5 review
+    抓到的一个真实回归：Compose 的 `LaunchedEffect`（AI 轮询驱动）比 `SpatialView.initial`
+    先跑，`startGame()` 一旦在渲染器 `attachTo` 之前就把 phase 翻成 `AWAITING_ROLL`，AI 循
+    环会在模型还没加载完、渲染器 `isAttached` 还是 false 的时候就已经摇骰子/走子——这几轮
+    全部因为 `isAttached` 门禁静默不播动画，棋盘淡入时已经是走了几步之后的样子，跟被删掉的
+    就座动画想掩盖的问题是同一类观感（round-2 logcat 里两次 roll 间隔只有 ~0.7s、没有骰子
+    动画，是铁证不是巧合：700ms 的 `AI_THINK_DELAY_MS` 稳定短于 1000ms 的 HMD 等待窗口）。
+    现在 `engine.startGame()` 挪到所有 `attachTo` 调用**之后**才执行，`configureSeat` 仍然
+    留在最前面——两者不能合并成同一时机。
 - **`rotate3D` 对 `SpatialModelView` 内嵌 3D 内容的实测结论**（Task 3 Step 7，机库窗口计划早
   期就验证过、这里是给后续维护者的存档）：`Modifier.rotate3D` **是 Compose 图层变换，不会传
   到 `SpatialModelView`/`SpatialView` 托管的 ECS 内容里**——用一次受控 A/B（round 1 带
