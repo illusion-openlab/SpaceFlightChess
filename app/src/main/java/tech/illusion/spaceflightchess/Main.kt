@@ -17,6 +17,7 @@ fun mainApp(scope: SpatialAppScope) =
             PicoTheme { HangarWindow() }
         }
         Stage(id = BOARD_STAGE_ID) {
-            PicoTheme { BoardStage() }
+            // bundle 来自 StageScope（继承 SpatialContainerScope），承载 openStage 传来的阵营。
+            PicoTheme { BoardStage(bundle) }
         }
     }

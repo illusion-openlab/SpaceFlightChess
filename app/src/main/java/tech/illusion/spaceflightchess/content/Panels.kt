@@ -1,8 +1,6 @@
 package tech.illusion.spaceflightchess.content
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -15,10 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,104 +60,6 @@ internal fun labelFor(team: Team): String = when (team) {
     Team.YELLOW -> "黄方"
     Team.BLUE -> "蓝方"
     Team.GREEN -> "绿方"
-}
-
-/** A single tappable faction swatch — a filled circle in that team's colour, ringed when selected. */
-@Composable
-private fun FactionSwatch(team: Team, isSelected: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(52.dp)
-            .clip(CircleShape)
-            .background(swatchFor(team))
-            .then(
-                if (isSelected) {
-                    Modifier.border(width = 3.dp, color = PicoTheme.colorScheme.labelPrimary, shape = CircleShape)
-                } else {
-                    Modifier
-                },
-            )
-            .clickable(onClick = onClick),
-    )
-}
-
-@Composable
-fun StartPanel(onStart: (Team) -> Unit) {
-    var selected by remember { mutableStateOf(Team.RED) }
-    // Whether the "玩法" (how-to-play) overlay is up. Scoped to this composable, not BoardStage's
-    // showExitConfirm, because it never needs to survive past this panel: HowtoOverlay is a
-    // BasicSheet now (its own modal window, see that composable's doc), so 开始游戏 is physically
-    // unreachable while it's open without this composable doing anything extra, and the moment the
-    // phase leaves SETUP this whole panel (and therefore this state) is torn down by BoardStage's
-    // `if (phase == Phase.SETUP && ...)` gate — mutual exclusion with the exit-confirm panel falls
-    // out of that same gate for free.
-    var showHowto by remember { mutableStateOf(false) }
-    GlassPanel(width = 360, height = 280) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(vertical = 20.dp, horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = "空间飞行棋",
-                color = PicoTheme.colorScheme.labelPrimary,
-                style = PicoTheme.typography.headlineSmall,
-            )
-            Spacer(Modifier.size(14.dp))
-            Text(
-                text = "选择你的阵营",
-                color = PicoTheme.colorScheme.labelSecondary,
-                style = PicoTheme.typography.bodyMedium,
-            )
-            Spacer(Modifier.size(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Team.entries.forEach { team ->
-                    FactionSwatch(team = team, isSelected = team == selected, onClick = { selected = team })
-                }
-            }
-            Spacer(Modifier.size(10.dp))
-            Text(
-                text = "你是${labelFor(selected)}，对手是其余三个 AI",
-                color = PicoTheme.colorScheme.labelSecondary,
-                style = PicoTheme.typography.bodyMedium,
-            )
-            Spacer(Modifier.weight(1f))
-            Button(onClick = {
-                // Defensive belt-and-suspenders: the scrim already makes this unreachable while
-                // showHowto is true, but this keeps "no overlay survives into the next phase" true
-                // even if that ever changes.
-                showHowto = false
-                onStart(selected)
-            }) {
-                Text("开始游戏", style = PicoTheme.typography.labelLarge)
-            }
-        }
-
-        // ── "玩法" entry button — a same-level sibling of the Column above, floated to the card's
-        // top-right corner (fully vacant today, unlike the crowded centre column). This SDK version's
-        // Button has no style/variant parameter and no predefined "secondary" color role (checked
-        // against design-6.0.0-sources.jar), so the muted look is produced by reusing 开始游戏's own
-        // fillPrimary/labelPrimaryLight roles rather than inventing a different one: a low-alpha fill
-        // keeps it from competing with the primary CTA while staying visually related to it.
-        Button(
-            onClick = { if (!showHowto) showHowto = true },
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp),
-            size = ButtonDefaults.Min,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = PicoTheme.colorScheme.fillPrimary.copy(alpha = 0.3f),
-                contentColor = PicoTheme.colorScheme.labelPrimaryLight,
-            ),
-            leadingIcon = { HowtoBadge() },
-        ) {
-            Text(
-                text = "玩法",
-                color = PicoTheme.colorScheme.labelPrimaryLight,
-                style = PicoTheme.typography.labelSmall,
-            )
-        }
-    }
-    if (showHowto) {
-        HowtoOverlay(onDismiss = { showHowto = false })
-    }
 }
 
 /**
@@ -216,7 +112,7 @@ fun GameHud(
  * Shown when the player presses the controller input `BoardStage`'s `OnBackPressedCallback`
  * intercepts — `DefaultStage` has no window chrome to fall back on, so without that callback the
  * input silently killed the whole session via `Activity.finish()` (see `BoardStage.findComponentActivity`).
- * Same layout as [StartPanel] / [ResultPanel]; 取消 dismisses, 退出 actually exits.
+ * Same layout as [ResultPanel]; 取消 dismisses, 退出 actually exits.
  */
 @Composable
 fun ExitConfirmPanel(onCancel: () -> Unit, onExit: () -> Unit) {

@@ -346,14 +346,12 @@ private fun TileFallback(team: Team, note: String) {
 }
 
 /**
- * The "?" badge used by both [StartPanel]'s and [HangarWindow]'s 玩法 entry buttons — a filled
- * dot, no icon asset needed. `internal`, not `private`: [StartPanel] in `Panels.kt` still calls
- * this (Task 5 removes that call site, not this task — see the brief's intermediate-state note),
- * and a top-level `private` declaration is file-scoped in Kotlin, so a same-package caller in
- * another file cannot see it.
+ * The "?" badge used by [HangarWindow]'s 玩法 entry button — a filled dot, no icon asset needed.
+ * Was `internal` (Task 3) because `StartPanel` in `Panels.kt` also called it; Task 5 removed that
+ * call site along with `StartPanel` itself, so this is back to file-scoped `private`.
  */
 @Composable
-internal fun HowtoBadge() {
+private fun HowtoBadge() {
     Box(
         modifier = Modifier
             .size(18.dp)
@@ -380,11 +378,11 @@ internal fun HowtoBadge() {
  * doesn't have that failure mode, and it gets the "点外部关闭 / 点内部不误关闭" behavior for free —
  * no more hand-written scrim `pointerInput` or a second consume-only one on the card itself.
  *
- * `internal`, not `private`, for the same reason as [HowtoBadge]: [StartPanel] in `Panels.kt`
- * still calls this until Task 5.
+ * Was `internal`, for the same reason as [HowtoBadge]: `StartPanel` in `Panels.kt` called this
+ * until Task 5 removed it. Back to file-scoped `private`.
  */
 @Composable
-internal fun HowtoOverlay(onDismiss: () -> Unit) = BasicSheet(onDismissRequest = onDismiss) {
+private fun HowtoOverlay(onDismiss: () -> Unit) = BasicSheet(onDismissRequest = onDismiss) {
     GlassPanel(width = 340, height = 248) {
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(

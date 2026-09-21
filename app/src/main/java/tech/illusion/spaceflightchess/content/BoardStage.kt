@@ -2,6 +2,7 @@ package tech.illusion.spaceflightchess.content
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -37,7 +38,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import tech.illusion.spaceflightchess.game.BoardGeometry
 import tech.illusion.spaceflightchess.game.GameEngine
 import tech.illusion.spaceflightchess.game.GameEvent
-import tech.illusion.spaceflightchess.game.GameState
 import tech.illusion.spaceflightchess.game.Move
 import tech.illusion.spaceflightchess.game.movementWaypoints
 import tech.illusion.spaceflightchess.game.MoveOutcome
@@ -49,7 +49,6 @@ import tech.illusion.spaceflightchess.game.Track
 
 private const val TAG = "SpaceFlightChess"
 
-private const val START_PANEL = "start"
 private const val HUD_PANEL = "hud"
 private const val RESULT_PANEL = "result"
 private const val EXIT_CONFIRM_PANEL = "exitConfirm"
@@ -71,10 +70,13 @@ private tailrec fun Context.findComponentActivity(): ComponentActivity? = when (
  * Everything the game needs: the board rig, the two renderers ([BoardRenderer] for the static
  * board, [PlanePieceRenderer] for the 16 pieces), the turn loop, and the three panels.
  *
- * **The human picks a faction on the start panel** — [GameEngine] itself is turn-agnostic (see its
- * class doc); [humanTeam] is the one piece of state this composable adds on top to know who to
- * treat as "you" versus AI, and [BoardGeometry.configureSeat] is told the same choice so the whole
- * board (art + every piece's position) rotates to put that faction's hangar at the seat position.
+ * **The human picks a faction before this composable ever runs** — in the hangar window
+ * ([HangarWindow]), whose choice arrives here via the `openStage` [Bundle] ([TEAM_BUNDLE_KEY]).
+ * [GameEngine] itself is turn-agnostic (see its class doc); [humanTeam] is the one piece of state
+ * this composable adds on top to know who to treat as "you" versus AI, and
+ * [BoardGeometry.configureSeat] is told the same choice so the whole board (art + every piece's
+ * position) is already oriented to put that faction's hangar at the seat position by the time
+ * anything is rendered — there is no in-board seat-change transition to watch.
  *
  * **The rig sits below and in front of the player, not centred under their own feet** —
  * `RIG_HEIGHT_M` used to be a fixed guess at eye height with the board floating chest-high right in
@@ -93,7 +95,7 @@ private tailrec fun Context.findComponentActivity(): ComponentActivity? = when (
  * sample, and the emulator, where HMD tracking may never produce data at all.
  */
 @Composable
-fun BoardStage() {
+fun BoardStage(bundle: Bundle?) {
     val engine = remember { GameEngine() }
     val boardRenderer = remember { BoardRenderer() }
     val pieceRenderer = remember { PlanePieceRenderer() }
@@ -108,7 +110,9 @@ fun BoardStage() {
 
     var phase by remember { mutableStateOf(engine.phase) }
     var currentTeam by remember { mutableStateOf(engine.state.currentTeam) }
-    var humanTeam by remember { mutableStateOf(Team.RED) }
+    // 阵营由机库窗口经 openStage 的 Bundle 送进来。解析失败退回红方——见 teamFromBundleValue 的
+    // KDoc：坐错席位远好过棋盘整个建不出来。
+    var humanTeam by remember { mutableStateOf(teamFromBundleValue(bundle?.getString(TEAM_BUNDLE_KEY))) }
     var lastRoll by remember { mutableStateOf<Int?>(null) }
     var aiThinking by remember { mutableStateOf(false) }
     /**
@@ -125,7 +129,6 @@ fun BoardStage() {
      * must release it in a `finally` — a stuck gate silently bricks the game.
      */
     var isTurnBusy by remember { mutableStateOf(false) }
-    var isSeating by remember { mutableStateOf(false) }
 
     /** Which team the die is currently parked in front of; drives [syncDieSlot]. */
     var dieSlotTeam by remember { mutableStateOf<Team?>(null) }
@@ -271,64 +274,6 @@ fun BoardStage() {
         coroutineScope.launch(Dispatchers.Main.immediate) {
             navigator.closeStage()
             Log.i(TAG, "closeStage() returned")
-        }
-    }
-
-    /**
-     * Applies the player's faction choice: animates the board (art + every hangar'd piece) rotating
-     * to seat them, then actually starts. All 16 pieces are still `InHangar` at this point — the
-     * start panel only shows during [Phase.SETUP], before [GameEngine.startGame] — so "rotate the
-     * board" and "move every piece to its new hangar slot" are the same instant in game-state terms;
-     * this just spreads that instant across [SEAT_ANIMATION_STEPS] interpolated frames instead of
-     * snapping straight there, which is what made the previous board/piece rotation read as pieces
-     * teleporting into a same-looking-but-wrong-team hangar rather than the board turning to face you.
-     */
-    fun startWithFaction(team: Team) {
-        // Guard against a second tap on 开始游戏 while the first seat animation is still running:
-        // two overlapping animations would interpolate the same pivots from different start points
-        // and fight frame by frame.
-        if (engine.phase != Phase.SETUP || isSeating) return
-        isSeating = true
-        humanTeam = team
-        coroutineScope.launch {
-          try {
-            val fromYaw = BoardGeometry.seatRotationDegrees
-            val fromHangars = Team.entries.associateWith { t ->
-                (0 until GameState.PIECES_PER_TEAM).map { BoardGeometry.hangarPosition(t, it) }
-            }
-
-            BoardGeometry.configureSeat(team)
-
-            val toYaw = BoardGeometry.seatRotationDegrees
-            val toHangars = Team.entries.associateWith { t ->
-                (0 until GameState.PIECES_PER_TEAM).map { BoardGeometry.hangarPosition(t, it) }
-            }
-
-            for (step in 1..SEAT_ANIMATION_STEPS) {
-                val ease = smoothStep(step.toFloat() / SEAT_ANIMATION_STEPS)
-                boardRenderer.updateSeatRotation(lerpAngleDegrees(fromYaw, toYaw, ease))
-                for (t in Team.entries) {
-                    for (index in 0 until GameState.PIECES_PER_TEAM) {
-                        val from = fromHangars.getValue(t)[index]
-                        val to = toHangars.getValue(t)[index]
-                        pieceRenderer.setPivotPosition(
-                            t,
-                            index,
-                            Vector3(lerp(from.x, to.x, ease), PlanePieceRenderer.PIECE_LIFT_M, lerp(from.z, to.z, ease)),
-                        )
-                    }
-                }
-                delay(SEAT_ANIMATION_FRAME_MS)
-            }
-
-            engine.startGame()
-            publish()
-            // The seat rotation just moved every slot, so re-place the die for whoever starts.
-            dieSlotTeam = engine.state.currentTeam
-            dieRenderer.setRestPosition(dieSlotFor(engine.state.currentTeam))
-          } finally {
-            isSeating = false
-          }
         }
     }
 
@@ -497,11 +442,6 @@ fun BoardStage() {
             }
         },
         attachments = {
-            AttachmentPanel(id = START_PANEL) {
-                if (phase == Phase.SETUP && !showExitConfirm) {
-                    StartPanel(onStart = ::startWithFaction)
-                }
-            }
             AttachmentPanel(id = HUD_PANEL) {
                 if (phase != Phase.SETUP && phase != Phase.GAME_OVER && !showExitConfirm) {
                     GameHud(
@@ -548,6 +488,14 @@ fun BoardStage() {
         },
         initial = { content, attachments ->
             try {
+                // 阵营在进 Stage 之前就定了，所以这里直接把棋盘配置成已就座——不再有「棋盘转向
+                // 你」的过渡动画。那段动画存在的唯一理由是掩盖「棋子瞬移到看起来一样但队伍不对的
+                // 机库」，而现在渲染器还没 attach，根本没有可见的中间状态需要掩盖。
+                //
+                // 必须在 boardRenderer / pieceRenderer 的 attachTo 之前：它们建实体时就会读
+                // BoardGeometry 的席位相关几何。
+                BoardGeometry.configureSeat(humanTeam)
+                engine.startGame()
                 content.addEntity(rig)
                 // Remembered so the die's rest spot can be placed on the same axis the board was —
                 // otherwise the two would disagree whenever the HMD sample arrives (or doesn't).
@@ -603,14 +551,13 @@ fun BoardStage() {
     )
 }
 
-private val PANEL_IDS = listOf(START_PANEL, HUD_PANEL, RESULT_PANEL, EXIT_CONFIRM_PANEL)
+private val PANEL_IDS = listOf(HUD_PANEL, RESULT_PANEL, EXIT_CONFIRM_PANEL)
 
 // The rig itself now sits at table height, forward-offset toward the board's near edge rather than
 // centred under the player (see the class doc), so panels need their own additional up-and-forward
 // offset on top of that to stay comfortably readable instead of hovering at floor level right where
 // the player is standing. Untested against a real head — see AGENTS.md follow-up.
 private val PANEL_OFFSETS = listOf(
-    Vector3(0f, 0.55f, -0.35f),
     // Centred, like the other two. It used to sit at x = +0.42, which put the turn readout 42cm off to
     // the player's right instead of over the lane facing them: 「这个游戏面板应该与玩家对面的航道对齐」.
     // The panels are children of the rig, whose local +X is the seated player's right, so x = 0 is the
@@ -618,7 +565,7 @@ private val PANEL_OFFSETS = listOf(
     // that line runs straight up the middle of the lane opposite them.
     Vector3(0f, 0.45f, -0.35f),
     Vector3(0f, 0.55f, -0.35f),
-    // Exit-confirm shares the same centred anchor as start/result — the three are mutually exclusive
+    // Exit-confirm shares the same centred anchor as result — the two are mutually exclusive
     // by their own visibility conditions, so there is never a clash.
     Vector3(0f, 0.55f, -0.35f),
 )
@@ -677,7 +624,3 @@ private const val TURN_POLL_MS = 50L
  * keep it from intersecting the printed plane.
  */
 private const val DIE_REST_HEIGHT_M = 0.018f
-
-// ── seat-change animation (see `startWithFaction`) ──────────────────────────
-private const val SEAT_ANIMATION_STEPS = 30
-private const val SEAT_ANIMATION_FRAME_MS = 16L
