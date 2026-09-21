@@ -73,10 +73,12 @@ private tailrec fun Context.findComponentActivity(): ComponentActivity? = when (
  * **The human picks a faction before this composable ever runs** — in the hangar window
  * ([HangarWindow]), whose choice arrives here via the `openStage` [Bundle] ([TEAM_BUNDLE_KEY]).
  * [GameEngine] itself is turn-agnostic (see its class doc); [humanTeam] is the one piece of state
- * this composable adds on top to know who to treat as "you" versus AI, and
- * [BoardGeometry.configureSeat] is told the same choice so the whole board (art + every piece's
- * position) is already oriented to put that faction's hangar at the seat position by the time
- * anything is rendered — there is no in-board seat-change transition to watch.
+ * this composable adds on top to know who to treat as "you" versus AI. [BoardGeometry.configureSeat]
+ * is told the same choice (driving every piece's position math), and [BoardRenderer.updateSeatRotation]
+ * is told [BoardGeometry.seatRotationDegrees] right after [BoardRenderer.attachTo] — both happen in
+ * `initial` before the first [publish], so the whole board (art + every piece) is already oriented
+ * to put that faction's hangar at the seat position by the time anything is rendered — there is no
+ * in-board seat-change transition to watch.
  *
  * **The rig sits below and in front of the player, not centred under their own feet** —
  * `RIG_HEIGHT_M` used to be a fixed guess at eye height with the board floating chest-high right in
@@ -112,7 +114,7 @@ fun BoardStage(bundle: Bundle?) {
     var currentTeam by remember { mutableStateOf(engine.state.currentTeam) }
     // 阵营由机库窗口经 openStage 的 Bundle 送进来。解析失败退回红方——见 teamFromBundleValue 的
     // KDoc：坐错席位远好过棋盘整个建不出来。
-    var humanTeam by remember { mutableStateOf(teamFromBundleValue(bundle?.getString(TEAM_BUNDLE_KEY))) }
+    val humanTeam by remember { mutableStateOf(teamFromBundleValue(bundle?.getString(TEAM_BUNDLE_KEY))) }
     var lastRoll by remember { mutableStateOf<Int?>(null) }
     var aiThinking by remember { mutableStateOf(false) }
     /**
@@ -310,8 +312,9 @@ fun BoardStage(bundle: Bundle?) {
         }
     }
 
-    // `DefaultStage` (see `mainApp`) is full immersion with no window chrome at all — no caption
-    // bar, no close button. Confirmed on real hardware: several different physical controller
+    // The named `Stage(id = BOARD_STAGE_ID)` (see `mainApp`) is full immersion with no window
+    // chrome at all — no caption bar, no close button, same as the `DefaultStage` this replaced.
+    // Confirmed on real hardware: several different physical controller
     // inputs (at least a single press of one button, and a double-press of another) all get
     // translated by PICO OS into a plain KEYCODE_BACK `KeyEvent` delivered to the foreground app
     // exactly like a phone's Back button. Left unhandled, `ComponentActivity`'s default back
@@ -530,6 +533,7 @@ fun BoardStage(bundle: Bundle?) {
                 } ?: Log.e(TAG, "no HMD pose within ${HMD_POSE_WAIT_MS}ms, keeping the fallback board pose")
 
                 boardRenderer.attachTo(rig)
+                boardRenderer.updateSeatRotation(BoardGeometry.seatRotationDegrees)
                 pieceRenderer.attachTo(rig)
                 dieRenderer.attachTo(rig)
                 musicPlayer.attachTo(rig)

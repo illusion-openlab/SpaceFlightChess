@@ -27,6 +27,13 @@ internal const val MIN_MEASURABLE_DIMENSION_M = 0.0001f
  * and not the other — see `.superpowers/sdd/2026-09-21-hangar-window/task-3-report.md`'s round 4
  * numbers for the measured bounds that motivated this.
  *
+ * **This is not yet the only place the pattern lives.** `DieRenderer.attachTo` still hand-inlines
+ * the identical scale-and-recenter arithmetic for the die model, with its own separate
+ * `MIN_MEASURABLE_DIMENSION_M` constant (shadowing this file's one) and a comment noting the
+ * duplication ("Same recenter pattern as PlanePieceRenderer"). `DieRenderer` predates this
+ * extraction and was out of scope for the migration that introduced this file — a reader should
+ * not assume the consolidation is complete everywhere the pattern appears.
+ *
  * **[bounds] must have been measured with `relativeTo` set to the model's own root entity, never
  * `null`.** `null` measures relative to the SpatialContainer/View (world/stage space), which bakes
  * in every ancestor transform above the model. [PlanePieceRenderer.attachTo] has the long comment

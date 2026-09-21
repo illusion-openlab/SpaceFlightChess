@@ -35,6 +35,8 @@
 
 **没做到的（不是遗漏，是下一阶段）**：骰子的抓取甩动手势（设计文档 Week 4）、飞行格起飞/降落动画（Week 4）、僚机叠放视觉细节；棋盘精确摆位（高度/距离/是否俯视）需要真机让用户实际转头看一圈才能定，这个模拟器截图工具给不了这个反馈。
 
+**另一个更晚的会话发现了一个不同性质的坑**：截图相机拿到的有时是请求那一刻之前的陈旧帧，跟"内容本身摆得对不对判不出来"是两码事——它会让两轮 A/B 对比截图看起来一样，产出假阴性（明明变了却像没变），不只是构图判不出摆位。
+
 ## 关键文件与职责
 
 - `app/src/main/java/tech/illusion/spaceflightchess/game/`：全部纯 Kotlin，见上方测试列表
@@ -1011,3 +1013,8 @@ controller 调 `.stop()`（+`.close()`）再执行原有的逐实体 `stopAllAni
 个函数引用，且这条路径本身已经被上面那次设备验证跑过一次），没有额外打一整局真人对局去触发
 `Phase.GAME_OVER` 现场验证——打满一整局需要走完整 AI 摇骰/落子流程，超出这轮设备锁的合理时
 间预算，权衡后没做，如实记录。
+
+**已知后续项（不属于本分支，留给未来分支）**：`ModelNormalization.kt` 的缩放/回中公式只统一了
+`PlanePieceRenderer` 和 `HangarWindow` 两处，`DieRenderer.attachTo` 还手写着同一套公式（连
+`MIN_MEASURABLE_DIMENSION_M` 都是它自己的一份，跟这边同名不同源）；这次最终审查故意没有动
+`DieRenderer` 的行为，只改了 `ModelNormalization.kt` 的 KDoc 别再声称"已全部统一"。

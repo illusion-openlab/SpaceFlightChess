@@ -49,8 +49,9 @@ class BoardRenderer {
 
     /**
      * Re-orients the printed board to [tech.illusion.spaceflightchess.game.BoardGeometry]'s current
-     * [tech.illusion.spaceflightchess.game.BoardGeometry.seatRotationDegrees] (or an interpolated
-     * value mid-animation — see `BoardStage`'s seat-change animation) after the player picks a seat.
+     * [tech.illusion.spaceflightchess.game.BoardGeometry.seatRotationDegrees] after the player picks
+     * a seat — a single one-shot call right after [attachTo], since the seat is decided before the
+     * Stage ever opens and there is no in-board seat-change transition left to interpolate through.
      * The artwork and the piece-position math must rotate together — pieces would otherwise keep
      * moving correctly relative to *each other* but sit on the wrong printed hangar/lane.
      *

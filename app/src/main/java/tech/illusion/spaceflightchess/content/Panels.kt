@@ -110,9 +110,10 @@ fun GameHud(
 
 /**
  * Shown when the player presses the controller input `BoardStage`'s `OnBackPressedCallback`
- * intercepts — `DefaultStage` has no window chrome to fall back on, so without that callback the
- * input silently killed the whole session via `Activity.finish()` (see `BoardStage.findComponentActivity`).
- * Same layout as [ResultPanel]; 取消 dismisses, 退出 actually exits.
+ * intercepts — the named `Stage(id = BOARD_STAGE_ID)` has no window chrome to fall back on, so
+ * without that callback the input silently killed the whole session via `Activity.finish()` (see
+ * `BoardStage.findComponentActivity`). Same layout as [ResultPanel]; 取消 dismisses, 退出 calls
+ * `BoardStage.returnToHangar()` — it returns to the hangar window, it does not exit the app.
  */
 @Composable
 fun ExitConfirmPanel(onCancel: () -> Unit, onExit: () -> Unit) {

@@ -200,16 +200,6 @@ class PlanePieceRenderer {
     fun pieceFor(entity: Entity?): Pair<Team, Int>? = entity?.let(pivotToKey::get)
 
     /**
-     * Places one piece's pivot directly at [position], bypassing [GameState] entirely. Used only by
-     * `BoardStage`'s seat-change animation to interpolate a piece between its pre- and post-rotation
-     * hangar slot frame-by-frame; every other caller should go through [render] instead so jitter and
-     * game state stay authoritative.
-     */
-    fun setPivotPosition(team: Team, index: Int, position: Vector3) {
-        pieces[team to index]?.pivot?.components?.get(TransformComponent::class.java)?.setPosition(position)
-    }
-
-    /**
      * Moves every piece to where [state] says it is, instantly — this is how captures and
      * hangar-returns land, and it is the authority for anything [animateMove] is not currently
      * moving.
@@ -715,8 +705,8 @@ class PlanePieceRenderer {
         /** Longest edge a loaded plane is scaled to, regardless of the source asset's original real-world scale. */
         private const val TARGET_PLANE_SIZE_M = 0.05f
 
-        /** Public so `BoardStage`'s seat-change animation can hold pieces at the same height mid-flight. */
-        const val PIECE_LIFT_M = 0.01f
+        /** How high a piece's pivot sits above the board surface at rest, before any standby/co-occupant lift. */
+        private const val PIECE_LIFT_M = 0.01f
 
         /**
          * 「飞机飞行时的声音音量太大了调小一点」. `plane_flight.mp3` is a hot master — -9.4 LUFS integrated and

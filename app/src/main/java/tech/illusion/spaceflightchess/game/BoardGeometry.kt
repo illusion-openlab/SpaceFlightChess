@@ -127,8 +127,9 @@ object BoardGeometry {
     /**
      * Extra whole-board rotation (in 90-degree steps) layered on top of the measured tables, so the
      * human's chosen faction's hangar lands at the near/seat quadrant instead of wherever the
-     * artwork happens to draw that team. Set once via [configureSeat] when the player picks a
-     * faction on the start panel; zero (no extra rotation) until then.
+     * artwork happens to draw that team. Set once via [configureSeat], called from `BoardStage`'s
+     * `SpatialView.initial` with the faction that arrived via the hangar window's `openStage`
+     * bundle — there is no in-board start panel any more; zero (no extra rotation) until then.
      */
     private var seatRotationSteps: Int = 0
 

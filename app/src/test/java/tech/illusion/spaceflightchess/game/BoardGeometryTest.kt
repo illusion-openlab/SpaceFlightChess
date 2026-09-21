@@ -140,6 +140,25 @@ class BoardGeometryTest {
     }
 
     @Test
+    fun `configureSeat sets the exact board-art yaw BoardRenderer must apply per team`() {
+        // Numeric regression for the bug where `BoardStage` stopped calling
+        // `BoardRenderer.updateSeatRotation` after the seat-change animation was deleted: the art
+        // silently stayed at whatever yaw it last had instead of matching the seated team. YELLOW is
+        // 0° (the unrotated seat-target quadrant itself), which is exactly why it was the one team
+        // that accidentally looked correct even while the call was missing — the other three are the
+        // ones that actually exercise this.
+        assertEquals(90f, seatRotationDegreesFor(Team.RED))
+        assertEquals(0f, seatRotationDegreesFor(Team.YELLOW))
+        assertEquals(270f, seatRotationDegreesFor(Team.BLUE))
+        assertEquals(180f, seatRotationDegreesFor(Team.GREEN))
+    }
+
+    private fun seatRotationDegreesFor(team: Team): Float {
+        BoardGeometry.configureSeat(team)
+        return BoardGeometry.seatRotationDegrees
+    }
+
+    @Test
     fun `configureSeat rotates the chosen team's hangar to the seat quadrant, and rotates every other team along with it`() {
         for (team in Team.entries) {
             BoardGeometry.configureSeat(team)
