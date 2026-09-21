@@ -525,6 +525,9 @@ fun BoardStage() {
                             // SETUP 阶段。
                             engine.startGame()
                             publish()
+                            // publish() 的事件排空只在 TurnPassed 上清 lastRoll——Started/Restarted
+                            // 都不落进那个分支，上一局的骰子读数会一直挂在 HUD 上直到下一次真的摇骰。
+                            lastRoll = null
                             // 重开后轮到谁变了，把骰子挪回那一队的空位（与 syncDieSlot 的滑行
                             // 不同，这里要的是立刻就位）。
                             dieSlotTeam = engine.state.currentTeam
