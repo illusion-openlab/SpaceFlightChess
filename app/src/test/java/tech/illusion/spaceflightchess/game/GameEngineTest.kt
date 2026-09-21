@@ -929,4 +929,24 @@ class GameEngineTest {
         assertEquals(Team.RED, wonEvent.ranking.first())
         assertEquals(Team.YELLOW, wonEvent.ranking[1]) // 1 finished piece, ahead of Blue/Green's 0
     }
+
+    @Test
+    fun `restart 之后立刻 startGame 能回到可摇骰的状态`() {
+        val engine = GameEngine()
+        engine.startGame()
+        engine.restart()
+        assertEquals(Phase.SETUP, engine.phase)
+
+        engine.startGame()
+        assertEquals(Phase.AWAITING_ROLL, engine.phase)
+        assertEquals(GameState.newGame().currentTeam, engine.state.currentTeam)
+    }
+
+    @Test
+    fun `restart 单独调用会停在 SETUP —— 这就是机库窗口取代 StartPanel 后必须补 startGame 的原因`() {
+        val engine = GameEngine()
+        engine.startGame()
+        engine.restart()
+        assertEquals(Phase.SETUP, engine.phase)
+    }
 }

@@ -250,7 +250,12 @@ fun ExitConfirmPanel(onCancel: () -> Unit, onExit: () -> Unit) {
 }
 
 @Composable
-fun ResultPanel(ranking: List<Team>, humanTeam: Team, onPlayAgain: () -> Unit) {
+fun ResultPanel(
+    ranking: List<Team>,
+    humanTeam: Team,
+    onPlayAgain: () -> Unit,
+    onBackToHangar: () -> Unit,
+) {
     GlassPanel(width = 320, height = 240) {
         Column(
             modifier = Modifier.fillMaxSize().padding(vertical = 20.dp),
@@ -271,8 +276,25 @@ fun ResultPanel(ranking: List<Team>, humanTeam: Team, onPlayAgain: () -> Unit) {
                 )
             }
             Spacer(Modifier.weight(1f))
-            Button(onClick = onPlayAgain) {
-                Text("再来一局", style = PicoTheme.typography.labelLarge)
+            // 两个出口：同阵营再来一局，或回机库换阵营——阵营选择已经搬去机库窗口了，
+            // 棋盘里没有别的地方能换。
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(onClick = onPlayAgain) {
+                    Text("再来一局", style = PicoTheme.typography.labelLarge)
+                }
+                Button(
+                    onClick = onBackToHangar,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PicoTheme.colorScheme.fillPrimary.copy(alpha = 0.3f),
+                        contentColor = PicoTheme.colorScheme.labelPrimaryLight,
+                    ),
+                ) {
+                    Text(
+                        text = "返回机库",
+                        color = PicoTheme.colorScheme.labelPrimaryLight,
+                        style = PicoTheme.typography.labelLarge,
+                    )
+                }
             }
         }
     }

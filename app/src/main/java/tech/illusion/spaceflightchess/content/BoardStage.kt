@@ -28,6 +28,8 @@ import com.pico.spatial.tracking.hmd.HMDTrackingProvider
 import com.pico.spatial.ui.foundation.content.SpatialView
 import com.pico.spatial.ui.foundation.gesture.TargetEntity
 import com.pico.spatial.ui.foundation.gesture.detectSpatialPointerEvent
+import com.pico.spatial.ui.platform.containers.LocalSpatialNavigator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -102,6 +104,7 @@ fun BoardStage() {
     val hmdTrackingProvider = remember { HMDTrackingProvider() }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val navigator = LocalSpatialNavigator.current
 
     var phase by remember { mutableStateOf(engine.phase) }
     var currentTeam by remember { mutableStateOf(engine.state.currentTeam) }
@@ -247,6 +250,28 @@ fun BoardStage() {
             isTurnBusy = false
         }
         syncDieSlot()
+    }
+
+    /**
+     * 回到机库窗口的唯一出口。顺序不可交换：`restoreWindowContainer` 的 KDoc 写着「can only be
+     * used when there is a stage open」，先 `closeStage` 的话，被最小化的机库窗口就再也没有 API
+     * 能叫回来了。
+     *
+     * 必须 `Dispatchers.Main.immediate`（不是 `coroutineScope.launch` 的默认调度）：
+     * `restoreWindowContainer` 有可能当场把这份组合拆掉，而 `rememberCoroutineScope()` 的 scope
+     * 随组合一起取消——默认调度下这个 launch 只是「排队等下一次派发」，排在取消后面就永远不会跑，
+     * `closeStage()` 和它的日志一起消失，画面上跟「什么都没发生」完全一样；真实后果是漏掉一个
+     * 全沉浸 Stage，下次 `openStage` 直接 `NotAllowed`。
+     *
+     * 两个返回值都记日志：这两步失败在画面上和「什么都没发生」一模一样，截图判不出来。
+     */
+    fun returnToHangar() {
+        val restored = navigator.restoreWindowContainer(HANGAR_WINDOW_ID)
+        Log.i(TAG, "restoreWindowContainer($HANGAR_WINDOW_ID) -> $restored")
+        coroutineScope.launch(Dispatchers.Main.immediate) {
+            navigator.closeStage()
+            Log.i(TAG, "closeStage() returned")
+        }
     }
 
     /**
@@ -490,14 +515,30 @@ fun BoardStage() {
             }
             AttachmentPanel(id = RESULT_PANEL) {
                 if (phase == Phase.GAME_OVER && !showExitConfirm) {
-                    ResultPanel(ranking = ranking, humanTeam = humanTeam, onPlayAgain = { engine.restart(); publish() })
+                    ResultPanel(
+                        ranking = ranking,
+                        humanTeam = humanTeam,
+                        onPlayAgain = {
+                            engine.restart()
+                            // restart() 把 phase 打回 SETUP，而选阵营的 StartPanel 已经搬去机库
+                            // 窗口了——不立刻 startGame 的话，游戏会卡死在一个没有任何 UI 的
+                            // SETUP 阶段。
+                            engine.startGame()
+                            publish()
+                            // 重开后轮到谁变了，把骰子挪回那一队的空位（与 syncDieSlot 的滑行
+                            // 不同，这里要的是立刻就位）。
+                            dieSlotTeam = engine.state.currentTeam
+                            dieRenderer.setRestPosition(dieSlotFor(engine.state.currentTeam))
+                        },
+                        onBackToHangar = ::returnToHangar,
+                    )
                 }
             }
             AttachmentPanel(id = EXIT_CONFIRM_PANEL) {
                 if (showExitConfirm) {
                     ExitConfirmPanel(
                         onCancel = { showExitConfirm = false },
-                        onExit = { activity?.finish() },
+                        onExit = ::returnToHangar,
                     )
                 }
             }
