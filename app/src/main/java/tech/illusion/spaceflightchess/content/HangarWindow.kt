@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,7 +29,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import com.pico.spatial.core.ecs.Entity
+import com.pico.spatial.core.ecs.TransformComponent
+import com.pico.spatial.core.ecs.ViewCoordinateSpace
+import com.pico.spatial.core.math.EulerAngles
+import com.pico.spatial.core.math.Vector3
 import com.pico.spatial.ui.design.Button
 import com.pico.spatial.ui.design.ButtonDefaults
 import com.pico.spatial.ui.design.IconButton
@@ -36,13 +43,7 @@ import com.pico.spatial.ui.design.IconButtonDefaults
 import com.pico.spatial.ui.design.PicoTheme
 import com.pico.spatial.ui.design.Text
 import com.pico.spatial.ui.design.windows.BasicSheet
-import com.pico.spatial.ui.foundation.content.Model
-import com.pico.spatial.ui.foundation.content.ModelLoadingState
-import com.pico.spatial.ui.foundation.content.Resizability
-import com.pico.spatial.ui.foundation.content.Source
-import com.pico.spatial.ui.foundation.content.SpatialModelView
-import com.pico.spatial.ui.foundation.effect3d.rotate3D
-import com.pico.spatial.ui.foundation.geometry.RotationAxis3D
+import com.pico.spatial.ui.foundation.content.SpatialView
 import com.pico.spatial.ui.platform.LocalSpatialContainerStateManager
 import com.pico.spatial.ui.platform.containers.LocalSpatialNavigator
 import com.pico.spatial.ui.platform.containers.OpenStageResult
@@ -58,18 +59,27 @@ private val TileShape = RoundedCornerShape(20.dp)
 private const val TILE_SIZE_DP = 180
 
 /**
- * 格子内留给 3D 模型的方框边长。刻意小于 [TILE_SIZE_DP]：`Resizability.FitInside` 把模型最长边
- * 缩到容器最短边，留出的余量是为了让选中态边框和机身之间有呼吸，同时把模型前伸的深度控制在
+ * 格子内留给 3D 模型的方框边长（同时是每个机位自己那个 `SpatialView` 的尺寸）。刻意小于
+ * [TILE_SIZE_DP]：留出的余量是为了让选中态边框和机身之间有呼吸，同时把模型前伸的深度控制在
  * Planar 窗口 640dp 的硬上限内（超出会被系统直接截断）。
  */
 private const val MODEL_BOX_DP = 132
 
 /**
+ * 飞机最长边相对 [MODEL_BOX_DP] 物理尺寸的填充比例。仿 [MODEL_BOX_DP] 相对 [TILE_SIZE_DP] 的
+ * 留白思路，不贴边顶格——既给选中态视觉呼吸，也给我们自己的包围盒测量留一点误差余量。
+ */
+private const val TILE_MODEL_FILL_FRACTION = 0.8f
+
+/** measured-bounds 的下限，同 `PlanePieceRenderer.MIN_MEASURABLE_DIMENSION_M`，避免退化模型除零。 */
+private const val MIN_MEASURABLE_TILE_DIMENSION_M = 0.0001f
+
+/**
  * 机库窗口——应用的平面入口。
  *
- * 用 [SpatialModelView] 直接展示四架真实飞机模型代替原来的四个纯色圆点。注意 `resizability` 的
- * API 默认值是 [Resizability.None]，必须显式传 [Resizability.FitInside] 才有官方文档说的
- * 「读资产 bbox 自动适配容器」。
+ * 每个机位用一个独立的 [SpatialView] + 手写 ECS 展示这一队的真实飞机模型，代替最初的
+ * [com.pico.spatial.ui.foundation.content.SpatialModelView] 方案（见 [PlaneTile] 的 KDoc：
+ * `SpatialModelView` 那条路径已经被 A/B 实验证伪，不是因为 `rotate3D`）。
  */
 @Composable
 fun HangarWindow() {
@@ -192,10 +202,19 @@ fun HangarWindow() {
 /**
  * 一个阵营的选机格子：一张可点卡片，中间是这一队飞机的真实 3D 模型。
  *
- * [rotate3D] 修正机头：四个 `.usdz` 的机头朝向不一致（见 [MODEL_YAW_OFFSET_DEG] 的实测注释）。
- * 棋盘上是给 Entity 加 yaw 偏移修正的，但 `SpatialModelView` 的 `LoadedModel.entity` 是
- * `internal`，窗口里拿不到 Entity，只能走 Compose 侧的这个修饰符。红/绿传 0f 是空操作，保留是
- * 为了四个格子走同一条代码路径。
+ * **不用 `SpatialModelView`。** 门禁 B 的 round1/round2 A/B 实验（把 `.rotate3D(...)` 整行删掉、
+ * 其余字节不动、重新截图对比）证伪了最初的怀疑：红方机位的 yaw offset 是 0°，round1
+ * 带着 `rotate3D(0f, …)` 和 round2 完全不带这个修饰符，两轮截图里红方飞机的偏移量肉眼不可分辨
+ * ——去掉变量之后问题原样保留，说明病因不是 rotate3D。真正的病因是四个 `.usdz` 的包围盒比可见
+ * 网格大得多、且中心不在网格上：`Resizability.FitInside` 是按包围盒去适配容器的，包围盒越偏、
+ * 越虚胖，适配出来的可见飞机就越小、越偏，四个机位因此呈现出四种不同的偏移和视觉大小——这正是
+ * `PlanePieceRenderer` 早就在棋盘侧遇到并修过的同一个坑（见其 `attachTo` 里那段 `relativeTo`
+ * 的长注释），只是 `SpatialModelView` 的 `LoadedModel.entity` 是 `internal`，这一侧拿不到 Entity
+ * 去做同样的测量+回中。换成 [SpatialView] + 手写 ECS 就有 Entity 了：复用棋盘那条已验证路径——
+ * `Entity.loadSuspend` 加载 → `getVisualBounds` 测量并回中 → 按 [TILE_MODEL_FILL_FRACTION] 缩到
+ * 贴合这个格子的物理尺寸（用 [SpatialView] 自带的像素↔米换算器算，不手工标定 magic scale）→
+ * yaw 直接写 [MODEL_YAW_OFFSET_DEG] 到实体的 [TransformComponent]。Entity 层面这才是真的在转：
+ * Compose 侧的 `rotate3D` 是图层变换，不会传到 `SpatialView` 托管的 ECS 内容里。
  *
  * 加载中/失败都回退到该队的纯色圆点：空白格子和「没有这个阵营」在视觉上无法区分。
  */
@@ -217,21 +236,63 @@ private fun PlaneTile(team: Team, isSelected: Boolean, onClick: () -> Unit) {
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
-            SpatialModelView(
-                source = Source.assets("models/${assetFileFor(team)}"),
-                modifier = Modifier
-                    .size(MODEL_BOX_DP.dp)
-                    .rotate3D(MODEL_YAW_OFFSET_DEG.getValue(team), RotationAxis3D.Y),
-                resizability = Resizability.FitInside,
-            ) { state ->
-                when (state) {
-                    is ModelLoadingState.Success -> Model(state.model)
-                    is ModelLoadingState.Loading -> TileFallback(team = team, note = "载入中")
-                    is ModelLoadingState.Error -> {
-                        Log.w(HANGAR_LOG_TAG, "model load failed for $team: ${state.reason}")
-                        TileFallback(team = team, note = "模型加载失败")
+            val density = LocalDensity.current
+            var tileRoot by remember { mutableStateOf<Entity?>(null) }
+            var loaded by remember { mutableStateOf(false) }
+            var loadFailed by remember { mutableStateOf(false) }
+
+            SpatialView(
+                modifier = Modifier.size(MODEL_BOX_DP.dp),
+                initial = { content, _ ->
+                    try {
+                        val root = Entity()
+                        content.addEntity(root)
+                        root.components[TransformComponent::class.java]?.eulerAngles =
+                            EulerAngles(pitch = 0f, yaw = MODEL_YAW_OFFSET_DEG.getValue(team), roll = 0f)
+
+                        // SpatialView 自带的像素↔米换算器：把这个格子的 dp 尺寸换成它在真实空间里
+                        // 的物理尺寸，而不是手工标定一个 magic scale factor（见
+                        // spatialviewcontent-is-the-coordinate-converter 记忆条目）。
+                        val boxPx = with(density) { MODEL_BOX_DP.dp.toPx() }
+                        val boxSizeM = content.convertSize(
+                            Vector3(boxPx, boxPx, 0f),
+                            ViewCoordinateSpace.Local,
+                            content.localSpatialCoordinateSpace,
+                        )
+                        val targetSizeM = minOf(boxSizeM.x, boxSizeM.y)
+                            .coerceAtLeast(MIN_MEASURABLE_TILE_DIMENSION_M) * TILE_MODEL_FILL_FRACTION
+
+                        val source = Entity.loadSuspend(uriString = "asset://models/${assetFileFor(team)}")
+                        root.addChild(source)
+                        // relativeTo 必须是 source 自己，不能传 null——同 PlanePieceRenderer.attachTo
+                        // 那段注释：null 是相对 SpatialView 的根实体测量的，会把这个 root 自身的
+                        // 定位/yaw 也吃进测量结果，产出的回中向量就是错的。
+                        val bounds = source.getVisualBounds(source)
+                        val maxDimension = maxOf(bounds.size.x, bounds.size.y, bounds.size.z)
+                            .coerceAtLeast(MIN_MEASURABLE_TILE_DIMENSION_M)
+                        val scale = targetSizeM / maxDimension
+                        val recenter = Vector3(-bounds.center.x * scale, -bounds.center.y * scale, -bounds.center.z * scale)
+                        source.components[TransformComponent::class.java]?.apply {
+                            setScaleVector(Vector3(scale, scale, scale))
+                            setPosition(recenter)
+                        }
+
+                        tileRoot = root
+                        loaded = true
+                    } catch (t: Throwable) {
+                        Log.w(HANGAR_LOG_TAG, "hangar plane load failed for $team", t)
+                        loadFailed = true
                     }
-                }
+                },
+            )
+
+            when {
+                loadFailed -> TileFallback(team = team, note = "模型加载失败")
+                !loaded -> TileFallback(team = team, note = "载入中")
+            }
+
+            DisposableEffect(Unit) {
+                onDispose { tileRoot?.destroy() }
             }
         }
         Spacer(Modifier.size(8.dp))
