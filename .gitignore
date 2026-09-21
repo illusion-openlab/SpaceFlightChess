@@ -35,3 +35,6 @@ google-services.json
 
 # SDD scratch (subagent-driven-development workspace)
 .superpowers/
+
+# 门禁 B 的截图证据（本地取证，不入库）
+.spatialsdk/ui-verify/
