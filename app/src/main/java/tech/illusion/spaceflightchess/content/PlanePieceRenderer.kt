@@ -148,10 +148,7 @@ class PlanePieceRenderer {
             // enough to sink through the board or the floor; the two teams needing the least scale-up
             // only drifted a couple of millimetres, easy to mistake for "close enough").
             val bounds = source.getVisualBounds(source)
-            val maxDimension = maxOf(bounds.size.x, bounds.size.y, bounds.size.z)
-                .coerceAtLeast(MIN_MEASURABLE_DIMENSION_M)
-            val scale = TARGET_PLANE_SIZE_M / maxDimension
-            val recenter = Vector3(-bounds.center.x * scale, -bounds.center.y * scale, -bounds.center.z * scale)
+            val (scale, recenter) = longestEdgeNormalization(bounds, TARGET_PLANE_SIZE_M)
 
             for (index in 0 until GameState.PIECES_PER_TEAM) {
                 val pivot = if (index == 0) probePivot else Entity().also(parent::addChild)
@@ -717,7 +714,6 @@ class PlanePieceRenderer {
 
         /** Longest edge a loaded plane is scaled to, regardless of the source asset's original real-world scale. */
         private const val TARGET_PLANE_SIZE_M = 0.05f
-        private const val MIN_MEASURABLE_DIMENSION_M = 0.0001f
 
         /** Public so `BoardStage`'s seat-change animation can hold pieces at the same height mid-flight. */
         const val PIECE_LIFT_M = 0.01f

@@ -48,6 +48,7 @@ import com.pico.spatial.ui.platform.LocalSpatialContainerStateManager
 import com.pico.spatial.ui.platform.containers.LocalSpatialNavigator
 import com.pico.spatial.ui.platform.containers.OpenStageResult
 import com.pico.spatial.ui.platform.containers.StageStyle
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import tech.illusion.spaceflightchess.game.Team
 
@@ -70,9 +71,6 @@ private const val MODEL_BOX_DP = 132
  * 留白思路，不贴边顶格——既给选中态视觉呼吸，也给我们自己的包围盒测量留一点误差余量。
  */
 private const val TILE_MODEL_FILL_FRACTION = 0.8f
-
-/** measured-bounds 的下限，同 `PlanePieceRenderer.MIN_MEASURABLE_DIMENSION_M`，避免退化模型除零。 */
-private const val MIN_MEASURABLE_TILE_DIMENSION_M = 0.0001f
 
 /**
  * 机库窗口——应用的平面入口。
@@ -109,28 +107,40 @@ fun HangarWindow() {
         showHowto = false
         val team = selected
         scope.launch {
-            val result = navigator.openStage(
-                id = BOARD_STAGE_ID,
-                // Mixed：虚拟内容始终渲染，环境光完全来自真实房间的 VST。这是改造前默认 Stage
-                // 用的同一个 style（原 manifest 的 pico.spatial.stage.style="1"），迁到非默认
-                // Stage 后只能在这里给：Stage() 这个 DSL 函数没有 style 参数。
-                style = StageStyle.Mixed,
-                bundle = Bundle().apply { putString(TEAM_BUNDLE_KEY, team.name) },
-            )
-            // 返回值必须分支处理，不能只记日志就丢掉：openStage 失败在画面上和「棋盘还在建」
-            // 完全一样，没有 launching 的正确回滚，失败之后这个窗口会永远卡在「进入中」、按钮
-            // 永远不可点——因为窗口从没失去过焦点，isFocused 的 effect 也就永远不会再触发。
-            when (result) {
-                is OpenStageResult.Allowed -> {
-                    stageOpened = true
-                    Log.i(HANGAR_LOG_TAG, "openStage($BOARD_STAGE_ID) -> $result")
-                    val minimized = navigator.minimizeWindowContainer(HANGAR_WINDOW_ID)
-                    Log.i(HANGAR_LOG_TAG, "minimizeWindowContainer($HANGAR_WINDOW_ID) -> $minimized")
+            // 外层 try/catch 处理 openStage 本身抛异常的情况——不只是它正常返回
+            // NotAllowed/Error。两者在画面上是同一个死结：没有回滚 launching，按钮就永远卡在
+            // 「进入中…」，因为窗口从没失去过焦点，isFocused 的 effect 也就永远不会再触发。
+            // CancellationException 单独放行，不当成失败处理：正常的协程取消（比如窗口被销毁）
+            // 不该被当作「openStage 失败」写日志或改状态，且吞掉它会破坏结构化并发的取消传播。
+            try {
+                val result = navigator.openStage(
+                    id = BOARD_STAGE_ID,
+                    // Mixed：虚拟内容始终渲染，环境光完全来自真实房间的 VST。这是改造前默认 Stage
+                    // 用的同一个 style（原 manifest 的 pico.spatial.stage.style="1"），迁到非默认
+                    // Stage 后只能在这里给：Stage() 这个 DSL 函数没有 style 参数。
+                    style = StageStyle.Mixed,
+                    bundle = Bundle().apply { putString(TEAM_BUNDLE_KEY, team.name) },
+                )
+                // 返回值必须分支处理，不能只记日志就丢掉：openStage 失败在画面上和「棋盘还在建」
+                // 完全一样，没有 launching 的正确回滚，失败之后这个窗口会永远卡在「进入中」、按钮
+                // 永远不可点——因为窗口从没失去过焦点，isFocused 的 effect 也就永远不会再触发。
+                when (result) {
+                    is OpenStageResult.Allowed -> {
+                        stageOpened = true
+                        Log.i(HANGAR_LOG_TAG, "openStage($BOARD_STAGE_ID) -> $result")
+                        val minimized = navigator.minimizeWindowContainer(HANGAR_WINDOW_ID)
+                        Log.i(HANGAR_LOG_TAG, "minimizeWindowContainer($HANGAR_WINDOW_ID) -> $minimized")
+                    }
+                    is OpenStageResult.NotAllowed, is OpenStageResult.Error -> {
+                        launching = false
+                        Log.w(HANGAR_LOG_TAG, "openStage($BOARD_STAGE_ID) failed -> $result")
+                    }
                 }
-                is OpenStageResult.NotAllowed, is OpenStageResult.Error -> {
-                    launching = false
-                    Log.w(HANGAR_LOG_TAG, "openStage($BOARD_STAGE_ID) failed -> $result")
-                }
+            } catch (t: CancellationException) {
+                throw t
+            } catch (t: Throwable) {
+                launching = false
+                Log.w(HANGAR_LOG_TAG, "openStage($BOARD_STAGE_ID) threw", t)
             }
         }
     }
@@ -210,11 +220,11 @@ fun HangarWindow() {
  * 越虚胖，适配出来的可见飞机就越小、越偏，四个机位因此呈现出四种不同的偏移和视觉大小——这正是
  * `PlanePieceRenderer` 早就在棋盘侧遇到并修过的同一个坑（见其 `attachTo` 里那段 `relativeTo`
  * 的长注释），只是 `SpatialModelView` 的 `LoadedModel.entity` 是 `internal`，这一侧拿不到 Entity
- * 去做同样的测量+回中。换成 [SpatialView] + 手写 ECS 就有 Entity 了：复用棋盘那条已验证路径——
- * `Entity.loadSuspend` 加载 → `getVisualBounds` 测量并回中 → 按 [TILE_MODEL_FILL_FRACTION] 缩到
- * 贴合这个格子的物理尺寸（用 [SpatialView] 自带的像素↔米换算器算，不手工标定 magic scale）→
- * yaw 直接写 [MODEL_YAW_OFFSET_DEG] 到实体的 [TransformComponent]。Entity 层面这才是真的在转：
- * Compose 侧的 `rotate3D` 是图层变换，不会传到 `SpatialView` 托管的 ECS 内容里。
+ * 去做同样的测量+回中。换成 [SpatialView] + 手写 ECS 就有 Entity 了：真正复用棋盘那条已验证路径
+ * ——量出的 bounds 交给两边共用的 [longestEdgeNormalization]（见其 KDoc），目标物理尺寸按
+ * [TILE_MODEL_FILL_FRACTION] 贴合这个格子（用 [SpatialView] 自带的像素↔米换算器算，不手工标定
+ * magic scale）→ yaw 直接写 [MODEL_YAW_OFFSET_DEG] 到实体的 [TransformComponent]。Entity 层面这
+ * 才是真的在转：Compose 侧的 `rotate3D` 是图层变换，不会传到 `SpatialView` 托管的 ECS 内容里。
  *
  * 加载中/失败都回退到该队的纯色圆点：空白格子和「没有这个阵营」在视觉上无法区分。
  */
@@ -247,8 +257,15 @@ private fun PlaneTile(team: Team, isSelected: Boolean, onClick: () -> Unit) {
                     try {
                         val root = Entity()
                         content.addEntity(root)
-                        root.components[TransformComponent::class.java]?.eulerAngles =
-                            EulerAngles(pitch = 0f, yaw = MODEL_YAW_OFFSET_DEG.getValue(team), roll = 0f)
+                        // 立刻记下 root，在任何可能挂起或抛异常的代码之前——DisposableEffect 的
+                        // onDispose 只销毁它能看到的 tileRoot，挂起点(Entity.loadSuspend)期间被
+                        // dispose、或挂起点之后到赋值之前抛异常，都会让这个 root 停留在
+                        // SpatialView 的内容树里却没人认领。loaded 仍然留在最后才置 true，因为它
+                        // 只是「这一帧该不该显示 3D 内容/该不该显示回退占位」的 UI 判据。
+                        tileRoot = root
+                        root.components[TransformComponent::class.java]?.let {
+                            it.eulerAngles = EulerAngles(pitch = 0f, yaw = MODEL_YAW_OFFSET_DEG.getValue(team), roll = 0f)
+                        } ?: Log.w(HANGAR_LOG_TAG, "team=$team root has no TransformComponent, yaw not applied")
 
                         // SpatialView 自带的像素↔米换算器：把这个格子的 dp 尺寸换成它在真实空间里
                         // 的物理尺寸，而不是手工标定一个 magic scale factor（见
@@ -260,25 +277,30 @@ private fun PlaneTile(team: Team, isSelected: Boolean, onClick: () -> Unit) {
                             content.localSpatialCoordinateSpace,
                         )
                         val targetSizeM = minOf(boxSizeM.x, boxSizeM.y)
-                            .coerceAtLeast(MIN_MEASURABLE_TILE_DIMENSION_M) * TILE_MODEL_FILL_FRACTION
+                            .coerceAtLeast(MIN_MEASURABLE_DIMENSION_M) * TILE_MODEL_FILL_FRACTION
 
+                        // Entity.loadSuspend 是真正的挂起点：round 4 的设备日志量过 YELLOW +4.1s、
+                        // BLUE +3.0s 才加载完，这期间窗口完全可能被关掉或这个格子被重新组合。
                         val source = Entity.loadSuspend(uriString = "asset://models/${assetFileFor(team)}")
                         root.addChild(source)
                         // relativeTo 必须是 source 自己，不能传 null——同 PlanePieceRenderer.attachTo
                         // 那段注释：null 是相对 SpatialView 的根实体测量的，会把这个 root 自身的
                         // 定位/yaw 也吃进测量结果，产出的回中向量就是错的。
                         val bounds = source.getVisualBounds(source)
-                        val maxDimension = maxOf(bounds.size.x, bounds.size.y, bounds.size.z)
-                            .coerceAtLeast(MIN_MEASURABLE_TILE_DIMENSION_M)
-                        val scale = targetSizeM / maxDimension
-                        val recenter = Vector3(-bounds.center.x * scale, -bounds.center.y * scale, -bounds.center.z * scale)
+                        val (scale, recenter) = longestEdgeNormalization(bounds, targetSizeM)
                         source.components[TransformComponent::class.java]?.apply {
                             setScaleVector(Vector3(scale, scale, scale))
                             setPosition(recenter)
-                        }
+                        } ?: Log.w(HANGAR_LOG_TAG, "team=$team source has no TransformComponent, scale/position not applied")
 
-                        tileRoot = root
                         loaded = true
+                    } catch (t: CancellationException) {
+                        // 结构化并发：挂起点(loadSuspend)上的正常取消（窗口销毁、这个格子被移出
+                        // 组合）不是「加载失败」，不能吞掉，否则既破坏取消传播，又会把一次正常
+                        // 取消误记成 team=$team load failed——round 4 就是靠这条日志把 GREEN
+                        // 的「没加载成功」和「加载成功但没显示出来」区分开的，一条会在正常取消时
+                        // 也触发的日志做不了这件事。
+                        throw t
                     } catch (t: Throwable) {
                         Log.w(HANGAR_LOG_TAG, "hangar plane load failed for $team", t)
                         loadFailed = true
