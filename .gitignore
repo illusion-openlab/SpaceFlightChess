@@ -32,3 +32,6 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# SDD scratch (subagent-driven-development workspace)
+.superpowers/

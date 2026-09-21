@@ -94,10 +94,12 @@ class PlaneAssetsTest {
 
     @Test
     fun `实测值：红绿机头朝 +Z 无需偏移，蓝黄朝 -X 需要 90 度`() {
-        assertEquals(0f, MODEL_YAW_OFFSET_DEG.getValue(Team.RED))
-        assertEquals(0f, MODEL_YAW_OFFSET_DEG.getValue(Team.GREEN))
-        assertEquals(90f, MODEL_YAW_OFFSET_DEG.getValue(Team.BLUE))
-        assertEquals(90f, MODEL_YAW_OFFSET_DEG.getValue(Team.YELLOW))
+        // JUnit 4 的 assertEquals 对浮点必须带 delta——不带 delta 的那个重载已废弃，
+        // Kotlin 下还会解析到装箱的 assertEquals(Object, Object)。
+        assertEquals(0f, MODEL_YAW_OFFSET_DEG.getValue(Team.RED), 0f)
+        assertEquals(0f, MODEL_YAW_OFFSET_DEG.getValue(Team.GREEN), 0f)
+        assertEquals(90f, MODEL_YAW_OFFSET_DEG.getValue(Team.BLUE), 0f)
+        assertEquals(90f, MODEL_YAW_OFFSET_DEG.getValue(Team.YELLOW), 0f)
     }
 }
 ```
