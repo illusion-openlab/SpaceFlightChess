@@ -930,3 +930,69 @@ controller 调 `.stop()`（+`.close()`）再执行原有的逐实体 `stopAllAni
 
 **测试**：132 单测全绿（这轮改动都在 Spatial SDK 渲染层，非纯逻辑，没有可测的新单元）。
 `assembleDebug` 通过。
+
+## 2026-09-21 — 入口改为平面机库窗口；阵营经 Bundle 传入棋盘 Stage；拆掉 StartPanel 与就座动画
+
+**这是「机库窗口」计划（5 个任务）的最后一步，做完之后的当前状态**：
+
+- **入口容器变了**：`DefaultWindowContainer`（默认空间容器）现在挂的是 `HangarWindow`（平面
+  2D 窗口，`content/HangarWindow.kt`），不再是棋盘本身。棋盘 (`BoardStage`) 变成一个非默认
+  `Stage(id = BOARD_STAGE_ID)`，只在用户点「开始游戏」时经 `LocalSpatialNavigator.openStage(...)`
+  打开（`style = StageStyle.Mixed`，与原来默认 `Stage` 用的沉浸样式一致；`Stage()` 这个 DSL
+  函数本身没有 `style` 参数，只能在 `openStage` 调用点给）。`Main.kt` 现在是：
+  ```kotlin
+  DefaultWindowContainer { PicoTheme { HangarWindow() } }
+  Stage(id = BOARD_STAGE_ID) { PicoTheme { BoardStage(bundle) } }
+  ```
+  两个容器 id（`HANGAR_WINDOW_ID`/`BOARD_STAGE_ID`）、bundle key（`TEAM_BUNDLE_KEY`）和阵营
+  解析函数（`teamFromBundleValue`，解析失败退回 `Team.RED`）都在 `content/Containers.kt`。
+- **阵营选择搬到机库窗口，棋盘不再自己选**：`HangarWindow` 里四个机位格子（`PlaneTile`）选
+  阵营，「开始游戏」调 `openStage(id = BOARD_STAGE_ID, bundle = Bundle().apply { putString(TEAM_BUNDLE_KEY, team.name) })`。
+  `BoardStage` 的签名从无参改成 `fun BoardStage(bundle: Bundle?)`，`humanTeam` 直接从这个
+  bundle 解析出来，**进 Stage 之前阵营就已经定了**。`StartPanel`/`FactionSwatch`（原来棋盘内
+  部的选阵营面板，`content/Panels.kt`）已删除；`BoardStage.kt` 的 `PANEL_IDS`/`PANEL_OFFSETS`
+  两个列表按下标一一对应，去掉 `START_PANEL` 那一项时两边都要同步改，改漏一个是不报编译错
+  的静默错位 bug（面板挂到错误的偏移上）。
+  - `HowtoOverlay`/`HowtoBadge`（"玩法"说明浮层，Task 3 引入）之前是 `internal`，因为
+    `StartPanel` 跨文件调用；`StartPanel` 删掉之后两者唯一的调用方就剩 `HangarWindow.kt` 自
+    己，已随手降级回 `private`。
+- **就座不再有过渡动画**：原来 `startWithFaction(team)` 会先把阵营选择结果动画化（棋盘朝向
+  + 16 架飞机的机库位置插值过渡 `SEAT_ANIMATION_STEPS=30` 帧），再 `engine.startGame()`——
+  这段动画存在的唯一理由是掩盖「棋子瞬移到看起来一样但队伍不对的机库」这个观感问题。现在阵
+  营在进 Stage 之前就通过 bundle 定了，`BoardGeometry.configureSeat(humanTeam)` +
+  `engine.startGame()` 直接在 `SpatialView` 的 `initial` 块里、`boardRenderer`/`pieceRenderer`
+  的 `attachTo` **之前**调用（它们建实体时会读 `BoardGeometry` 的席位几何），渲染器此时还没
+  attach，没有可见的中间状态需要掩盖，所以整段插值动画、`startWithFaction`、`isSeating` 状
+  态、`SEAT_ANIMATION_STEPS`/`SEAT_ANIMATION_FRAME_MS` 两个常量一并删除。
+  `AnimationMath.kt` 里的 `lerp`/`smoothStep`/`lerpAngleDegrees` **没有跟着删**——棋子走棋动
+  画（`PlanePieceRenderer.animateMove` 经 `DieRenderer` 的滚动效果）还在用。
+- **`rotate3D` 对 `SpatialModelView` 内嵌 3D 内容的实测结论**（Task 3 Step 7，机库窗口计划早
+  期就验证过、这里是给后续维护者的存档）：`Modifier.rotate3D` **是 Compose 图层变换，不会传
+  到 `SpatialModelView`/`SpatialView` 托管的 ECS 内容里**——用一次受控 A/B（round 1 带
+  `rotate3D(MODEL_YAW_OFFSET_DEG.getValue(team), RotationAxis3D.Y)`，round 2 把这一行整个删
+  掉，其余字节不动）证实：0° 偏移的红方在两轮里像素级不变，说明观察到的模型错位跟 `rotate3D`
+  无关。真正病因是四个 `.usdz` 的原始包围盒（bbox）比可见网格大得多、且中心不在网格上——
+  `Resizability.FitInside`/等效的手工缩放按包围盒适配容器，包围盒越偏、越虚胖，适配出来的可
+  见飞机就越小、越偏。`HangarWindow.kt` 最终没有用 `SpatialModelView` + `rotate3D`，改成了
+  `PlaneTile` 里手写 `SpatialView` + ECS（`Entity.loadSuspend` + 量 `getVisualBounds` 自己
+  算缩放/回中，见 `content/PlanePieceRenderer.kt` 早就验证过的同一条路径），yaw 直接写实体的
+  `TransformComponent`——这才是真的在转模型，不是转面板图层。**以后再有人怀疑 `rotate3D` 转
+  不动内嵌 3D 内容，不用重新做这个实验，结论已经定了。**
+- **全量测试**：145 个 JUnit 单测全绿（`./gradlew testDebugUnitTest --rerun-tasks`，直接读
+  `TEST-*.xml` 而不是只信 Gradle 的 `UP-TO-DATE` 摘要行）；`assembleDebug` 通过。
+- **设备闭环验证**（模拟器，`emulator-5554`）：模拟器截图相机不可信判 3D 摆位（这条早就是本
+  项目的既定结论），这轮改用 logcat 做证据链——选了**蓝方**（红方是解析失败的退回值，测红方
+  测不出 bundle 到底有没有传到），logcat 里 `roll: ... humanTeam=BLUE` 反复出现，证实
+  `openStage` 的 bundle 真的传到了 `BoardStage` 并被用于就座，不是退回红方；`openStage(...)
+  -> Allowed`、`minimizeWindowContainer(...) -> true`、`restoreWindowContainer(...) -> true`、
+  `closeStage() returned` 均出现，返回机库这条出口（后退键 → 退出确认 → 退出）验证通过。因为
+  这个模拟器上 `adb shell input tap` 摸不准 `SpatialUI` 组件（两种坐标换算方式都试过，见项目
+  记忆 `device-split-real-vs-emulator`），验证过程用了临时代码钩子（`LaunchedEffect` 直接调用
+  按钮背后同一个生产函数，如 `selected = Team.BLUE; startGame()`、`returnToHangar()`）代替真
+  实点击去触发状态转换，验完已全部移除，不在提交历史里。
+
+**下一步（未做，不是本轮遗漏）**：`ResultPanel`「返回机库」按钮触发的那条 `returnToHangar()`
+出口，这轮只做了静态代码核对（`onBackToHangar = ::returnToHangar`，跟退出确认面板调的是同一
+个函数引用，且这条路径本身已经被上面那次设备验证跑过一次），没有额外打一整局真人对局去触发
+`Phase.GAME_OVER` 现场验证——打满一整局需要走完整 AI 摇骰/落子流程，超出这轮设备锁的合理时
+间预算，权衡后没做，如实记录。
