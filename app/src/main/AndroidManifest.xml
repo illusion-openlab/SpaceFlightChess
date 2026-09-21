@@ -27,39 +27,34 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- DefaultStage Configuration -->
+            <!-- DefaultWindowContainer Configuration -->
 
-            <!-- The unique name/id of the Stage -->
+            <!-- 必填：窗口唯一 id。必须与 content/Containers.kt 的 HANGAR_WINDOW_ID 逐字一致 ——
+                 minimizeWindowContainer / restoreWindowContainer 就是按这个字符串定位窗口的，
+                 对不上不报错，只会静默什么都不发生。 -->
             <meta-data
-                android:name="pico.spatial.stage.id"
-                android:value="YourStage" />
+                android:name="pico.spatial.windowcontainer.id"
+                android:value="SpaceFlightChessHangarWindow" />
 
-            <!-- Stage style at launch
-                 "0": StageStyle.Automatic, a system default setting, set to Mixed currently (default)
-                 "1": StageStyle.Mixed — displays both virtual content and the real environment at full intensity (100% each)
-                 "2": StageStyle.Progressive — allows adjusting the balance between virtual and real environments (0–100%)
-                    At 0: immersion = 0,full real environment, no virtual content
-                    At 100: immersion = 100,full virtual content, no real environment
-                 "3": StageStyle.Full — displays only virtual content (100%)
-             -->
+            <!-- 窗口形态：'1' = Planar，'2' = Volumetric。
+                 选 Planar：机库是一块以 2D 排版为主的选择面板，四架飞机是点缀而非主体。官方文档
+                 （spatial-design_foundation_window.md）明确 Planar 可以承载 3D 内容，但深度固定
+                 640dp 不可改、超出部分被系统截断——MODEL_BOX_DP 就是按这个预算定的。 -->
             <meta-data
-                android:name="pico.spatial.stage.style"
+                android:name="pico.spatial.windowcontainer.style"
                 android:value="1" />
 
-            <!-- The immersion of a Progressive Stage at launch, only works when stage style is Progressive, range [0, 100], default value is 50 -->
+            <!-- 宽x高，单位 dp。容纳标题 + 四个 180dp 格子（间距 20dp）+ 底部按钮行。
+                 Planar 的深度固定 640dp，写不了也不用写。门禁 B 第 1 轮截图后可微调。 -->
             <meta-data
-                android:name="pico.spatial.stage.immersion"
-                android:value="100" />
+                android:name="pico.spatial.windowcontainer.defaultsize"
+                android:value="1040x620" />
 
-            <!-- The minimum immersion of a Progressive Stage that the user can adjust to, only works when stage style is Progressive, range [0, 100], default value is 0 -->
+            <!-- 关掉系统毛玻璃底板：两个共面半透明层是真机摩尔纹的已知诱因。主窗口的毛玻璃
+                 只能在 manifest 关，DSL 侧没有对应参数。 -->
             <meta-data
-                android:name="pico.spatial.stage.immersion_min"
-                android:value="100" />
-
-            <!-- The maximum immersion of a Progressive Stage that the user can adjust to, only works when stage style is Progressive, range [0, 100], default value is 100 -->
-            <meta-data
-                android:name="pico.spatial.stage.immersion_max"
-                android:value="100" />
+                android:name="pico.spatial.windowcontainer.materialbackground"
+                android:value="0" />
 
         </activity><!-- Default log level is None — without this the SDK swallows its own errors. -->
         <meta-data android:name="pico.spatial.ui.Logger" android:value="1" />
