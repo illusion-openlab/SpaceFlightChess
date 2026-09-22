@@ -2,6 +2,7 @@ package tech.illusion.spaceflightchess.content
 
 import android.os.Bundle
 import android.util.Log
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import com.pico.spatial.core.ecs.BoundingBox
 import com.pico.spatial.core.ecs.Entity
 import com.pico.spatial.core.ecs.TransformComponent
 import com.pico.spatial.core.ecs.ViewCoordinateSpace
@@ -58,6 +60,21 @@ private val TileShape = RoundedCornerShape(20.dp)
 
 /** 每个选机格子的边长。四格并排 + 间距要落在 manifest 的 defaultsize 宽度里。 */
 private const val TILE_SIZE_DP = 180
+
+/**
+ * 选中态下 [TILE_SIZE_DP] 放大到的尺寸——门禁 A 确认的选中态"变大高亮"增量，卡片外框本身。
+ * 只放大外框（[Modifier.size]，纯 Compose 布局尺寸变化，`animateDpAsState` 驱动），不碰
+ * [MODEL_BOX_DP]/`SpatialView` 自己的视口尺寸：这条工作区在 `SpatialModelView`+`rotate3D` 上吃过
+ * 图形层变换搞坏 3D 内容摆位的亏，这次选中态放大刻意只用布局尺寸变化 + ECS 层重新缩放两条已验证
+ * 安全的路径，不引入任何新的图形层变换。
+ */
+private const val SELECTED_TILE_SIZE_DP = 200
+
+/**
+ * 选中时飞机模型自身的物理缩放系数——与 [SELECTED_TILE_SIZE_DP]/[TILE_SIZE_DP] 同比例（约
+ * 1.11×），让卡片和飞机读起来是"整体变大了"而不是"卡片变大、飞机在更大的留白里显得更小"。
+ */
+private val SELECTED_SCALE_FACTOR = SELECTED_TILE_SIZE_DP.toFloat() / TILE_SIZE_DP
 
 /**
  * 格子内留给 3D 模型的方框边长（同时是每个机位自己那个 `SpatialView` 的尺寸）。刻意小于
@@ -128,8 +145,14 @@ fun HangarWindow() {
                     is OpenStageResult.Allowed -> {
                         stageOpened = true
                         Log.i(HANGAR_LOG_TAG, "openStage($BOARD_STAGE_ID) -> $result")
-                        val minimized = navigator.minimizeWindowContainer(HANGAR_WINDOW_ID)
-                        Log.i(HANGAR_LOG_TAG, "minimizeWindowContainer($HANGAR_WINDOW_ID) -> $minimized")
+                        // minimizeWindowContainer is NOT called here. Real-hardware evidence: doing it
+                        // synchronously right after openStage returns Allowed threw
+                        // `IllegalStateException: There is no stage open` — the platform hadn't
+                        // finished internally committing the new stage as open yet. It's called
+                        // instead from BoardStage's own `initial`, once that Stage's composition is
+                        // actually running — by then the platform has committed to it, so that call
+                        // site doesn't race. Same pattern as SpaceCube's GamePage minimizing its
+                        // ConfigPage window from the game side, not the config side.
                     }
                     is OpenStageResult.NotAllowed, is OpenStageResult.Error -> {
                         launching = false
@@ -230,10 +253,16 @@ fun HangarWindow() {
  */
 @Composable
 private fun PlaneTile(team: Team, isSelected: Boolean, onClick: () -> Unit) {
+    // 卡片外框选中态放大——纯 Compose 布局尺寸变化（见 SELECTED_TILE_SIZE_DP 的 KDoc），
+    // animateDpAsState 给它一个平滑过渡而不是瞬间跳变。
+    val tileSizeDp by animateDpAsState(
+        targetValue = if (isSelected) SELECTED_TILE_SIZE_DP.dp else TILE_SIZE_DP.dp,
+        label = "planeTileSize",
+    )
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
-                .size(TILE_SIZE_DP.dp)
+                .size(tileSizeDp)
                 .clip(TileShape)
                 .background(PicoTheme.colorScheme.fillTertiary)
                 .then(
@@ -250,9 +279,33 @@ private fun PlaneTile(team: Team, isSelected: Boolean, onClick: () -> Unit) {
             var tileRoot by remember { mutableStateOf<Entity?>(null) }
             var loaded by remember { mutableStateOf(false) }
             var loadFailed by remember { mutableStateOf(false) }
+            // 三者一起缓存，供下面的 update 回调在 isSelected 变化时重新缩放模型——不用 content
+            // 重新做像素↔米换算，baseTargetSizeM 是 initial 里算过一次的不变量，选中态只是拿它
+            // 乘一个系数。
+            var loadedSource by remember { mutableStateOf<Entity?>(null) }
+            var loadedBounds by remember { mutableStateOf<BoundingBox?>(null) }
+            var baseTargetSizeM by remember { mutableStateOf(0f) }
 
             SpatialView(
                 modifier = Modifier.size(MODEL_BOX_DP.dp),
+                update = { _, _ ->
+                    // 读了 isSelected，所以 isSelected 变化时 Compose 会重新调用这个回调——这是
+                    // SpatialView 的 update 参数自带的语义（"Every time the compose state which is
+                    // read in this function changes, the update will be invoked"），不需要额外的
+                    // LaunchedEffect。initial 完成之前 loadedSource/loadedBounds 还是 null，直接
+                    // 跳过；initial 完成后的第一次 update 会用当前 isSelected 值重新套一遍这段
+                    // 逻辑，对默认就选中的机位（如启动时的红方）也是对的。
+                    val source = loadedSource
+                    val bounds = loadedBounds
+                    if (source != null && bounds != null && baseTargetSizeM > 0f) {
+                        val targetSizeM = baseTargetSizeM * if (isSelected) SELECTED_SCALE_FACTOR else 1f
+                        val (scale, recenter) = longestEdgeNormalization(bounds, targetSizeM)
+                        source.components[TransformComponent::class.java]?.apply {
+                            setScaleVector(Vector3(scale, scale, scale))
+                            setPosition(recenter)
+                        }
+                    }
+                },
                 initial = { content, _ ->
                     try {
                         val root = Entity()
@@ -292,6 +345,13 @@ private fun PlaneTile(team: Team, isSelected: Boolean, onClick: () -> Unit) {
                             setScaleVector(Vector3(scale, scale, scale))
                             setPosition(recenter)
                         } ?: Log.w(HANGAR_LOG_TAG, "team=$team source has no TransformComponent, scale/position not applied")
+
+                        // 缓存给 update 回调用：isSelected 变化时不用重新做像素↔米换算或重新量
+                        // bounds，只需要拿 baseTargetSizeM 乘一个选中态系数再重跑一遍同一个
+                        // normalize+apply。
+                        loadedSource = source
+                        loadedBounds = bounds
+                        baseTargetSizeM = targetSizeM
 
                         loaded = true
                     } catch (t: CancellationException) {

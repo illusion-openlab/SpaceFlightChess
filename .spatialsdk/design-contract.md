@@ -138,3 +138,44 @@
 弹层内部视觉内容（标题、关闭按钮、简介/操作/规则文本）未改动，§2.2 的元素表在视觉规格上仍然有效；仅"容器类型"从"`GlassPanel` Box 的同级子项"变为"`BasicSheet` 独立窗口"。
 
 **验证现状**：编译通过；4 轮模拟器 install/launch 均无崩溃、无 ANR，`start_page` 默认态（弹层未展开）截图与既有验证一致。弹层展开态未能在模拟器上截图确认——`adb shell input tap` 在窗口首次出现后的短暂时间窗口内始终未命中或未能稳定复现该窗口（尝试了 2s/4s/6s 等待与 `pm clear` 两种路径，均未能在弹层可见时刻同步截图），与本文件 §6 已预先记录的『模拟器角标按钮命中率存疑』风险一致。摩尔纹本身是真机专属的立体渲染现象，即使模拟器截图成功也无法证实/证伪，**这一项必须由用户在真机上复核**。
+
+## 附录 3：机库窗口 HangarWindow / PlaneTile 选中态放大+高亮增量（2026-09-22）
+
+> 本增量首次把 `HangarWindow`/`PlaneTile` 纳入本契约——它们是机库窗口功能上线后新增的组件，此前不在本文件覆盖范围内（本文件其余部分描述的是已被删除的 `StartPanel`）。本增量只覆盖 `PlaneTile` 的选中态视觉，不改动机库窗口其余任何元素。
+
+### 0. 元信息
+
+- 设计源：用户直接提出"选择飞机时能否增加变大高亮选中状态"，经门禁 A 呈现两套方案（卡片+飞机同比例放大 vs 只放大卡片）后用户确认前者
+- 对照代码：`app/src/main/java/tech/illusion/spaceflightchess/content/HangarWindow.kt`（`PlaneTile`）
+- 用户确认时间：2026-09-22 —— 已通过门禁 A 确认
+
+### 1. 选中态视觉规格
+
+| 元素 | 未选中 | 选中 | 实现方式 |
+|---|---|---|---|
+| 卡片外框（`PlaneTile` 的外层 `Box`） | 180dp | 200dp（+11%） | `animateDpAsState` 驱动的 `Modifier.size(...)`，纯 Compose 布局尺寸变化，约 200ms 过渡动画 |
+| 飞机模型物理尺寸 | 基准值（`baseTargetSizeM`，`longestEdgeNormalization` 算出） | 基准值 × 1.11（与卡片同比例） | ECS 层：`SpatialView` 的 `update` 回调在 `isSelected` 变化时重新调用 `longestEdgeNormalization` 并重写 `TransformComponent` 的 scale/position——复用飞机首次加载时就在用的同一条已验证路径，不是新技术 |
+| 描边 | 无 | 3dp `labelPrimary`（沿用现状，未加粗） | 不变 |
+| 未选中的其余格子 | 不变 | 不变 | 不做缩小/变暗处理，YAGNI |
+
+### 2. 不做清单
+
+- 不改 `MODEL_BOX_DP`（`SpatialView` 自己的视口尺寸）——只放大卡片外框和飞机的物理缩放，不碰 `SpatialView` 本身的 Compose 布局尺寸，避免任何图形层变换风险（本工作区在 `SpatialModelView`+`rotate3D` 上有过教训）
+- 不加发光/阴影特效
+- 不做 Z 轴前移
+- 加载中/失败态的纯色圆点占位（`TileFallback`）不跟着选中态放大——这是几秒内会被真实模型取代的过渡态，收益不成比例
+
+### 3. 截图验证计划（门禁 B）
+
+| 序号 | 状态描述 | 到达方式 | 核对点 |
+|---|---|---|---|
+| 1 | 默认态，红方（默认选中）应已是放大态 | 启动应用，不做任何点击 | 红方卡片明显比其余三个大一圈，红方飞机本身也显得更大 |
+| 2 | 切换选中到另一队 | 点击非红方的某个机位 | 新选中的卡片变大，红方卡片缩回原尺寸；描边跟随选中态移动 |
+
+## 附录 4：机库窗口 minimizeWindowContainer 真机时序修复（2026-09-22，非视觉改动）
+
+真机反馈：点击"开始游戏"进入棋盘后，机库窗口没有关闭。真机日志定位根因：`HangarWindow.kt` 原实现在 `openStage` 返回 `Allowed` 后立即同步调用 `minimizeWindowContainer(HANGAR_WINDOW_ID)`，此刻平台内部尚未完成"stage 已打开"的登记，抛出 `IllegalStateException: There is no stage open`，minimize 失败，窗口留在原地。
+
+**修法**：把 `minimizeWindowContainer` 的调用挪到新开的 `BoardStage` 自己的 `initial` 里（渲染器全部 attach、`engine.startGame()` 之后）——从"被 minimize 的窗口自己异步调用后紧跟着调"改为"新开的 Stage 自己的代码里调"，这是工作区内 `SpaceCube` 项目（`GamePage.kt` 从游戏页调用 `minimizeWindowContainer(CONFIG_WINDOW_ID)`）已验证过的调用位置，天然避开该竞态。
+
+不改变任何已确认的视觉设计——只是让原来就该发生的行为（进棋盘后机库窗口消失）真正发生。此前所有设备验证刻意只走模拟器（真机留给用户试玩），这条竞态只在真机上暴露，模拟器全程没有复现过。

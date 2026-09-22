@@ -23,3 +23,17 @@
 - 摩尔纹本身是真机双目立体渲染专属现象，模拟器截图即使拍到弹层也无法证实/证伪，**最终确认需要用户在真机上复核**。
 
 **未消耗满 2 轮修复上限**：本次不是"发现 Blocker 后修复"的场景，是新功能/结构迁移的首次验证，遇到的是模拟器截图能力边界，不是代码缺陷，因此未进入修复循环。
+
+## 轮次：机库选中态放大 + minimizeWindowContainer 真机修复（2026-09-22）
+
+- 时间：2026-09-22 09:47 CST
+- 设备：真机 PB3B4XJGL2090011G（bug 只在真机复现，模拟器不适用本轮）
+- 锁：acquire/release 均成功，owner=SpaceFlightChess-gateB-hangar-highlight，全程 <15s
+- 截图：**失败，不可判定**——`pico-cli capture screenshot` 报 `ADB screancap returned non-PNG output`，与工作区已记录的真机截图能力缺陷一致（真机 adb screencap 退出码 0 但吐错误文本，不是 PNG）。已装机启动最新 APK，应用随即被 stop，未占用设备
+- 结论：本轮门禁 B 的自动化截图验证不可行。改为请用户在真机上直接确认（视觉判断 + 日志佐证 minimizeWindowContainer 是否成功）
+
+- 后续（用户真机试玩 + 事后日志交叉核对，同日）：用户戴机确认"红方卡片明显更大+更亮"与"点开始游戏后机库窗口消失"均符合预期。事后只读日志核对（不干预设备）拿到独立客观证据：
+  - `minimizeWindowContainer(SpaceFlightChessHangarWindow) -> true`（无异常，Bug 修复在真机生效）
+  - `model animations: team=RED/YELLOW/BLUE/GREEN` 四队全部加载
+  - 轮转记录显示红/黄/蓝三队均由 AI 驱动摇骰/落子，反推玩家选的是绿方（非默认红方），佐证测的是真实换阵营流程
+- 结论：**通过**——视觉判断（用户）+ 客观日志（agent 事后只读核对）双重确认，两处改动均已验证生效

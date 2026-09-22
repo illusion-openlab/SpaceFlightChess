@@ -551,6 +551,20 @@ fun BoardStage(bundle: Bundle?) {
                 // harmless but pointless no-op glideToRest to the slot the die is already resting in.
                 dieSlotTeam = engine.state.currentTeam
 
+                // Minimizing the hangar window from HERE — the callee side, once this Stage's own
+                // `initial` is actually running — not from the caller side (HangarWindow, right after
+                // `openStage` returns Allowed). Real-hardware evidence: calling it from the caller
+                // immediately on Allowed threw `IllegalStateException: There is no stage open` — the
+                // platform hadn't finished internally committing the new stage as open yet, even
+                // though openStage had already returned Allowed. By the time this Stage's own `initial`
+                // is executing, the platform has already committed to it, so this call site doesn't
+                // race. Same pattern as SpaceCube's GamePage.initial minimizing its ConfigPage window
+                // from the game side rather than the config side. Return value logged: a failure here
+                // looks on screen exactly like "nothing happened" — the hangar window would just stay
+                // visible with no other symptom.
+                val minimized = navigator.minimizeWindowContainer(HANGAR_WINDOW_ID)
+                Log.i(TAG, "minimizeWindowContainer($HANGAR_WINDOW_ID) -> $minimized")
+
                 PANEL_IDS.forEachIndexed { index, id ->
                     attachments.entity(id)?.let { entity ->
                         rig.addChild(entity)
